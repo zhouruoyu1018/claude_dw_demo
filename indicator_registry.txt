@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS public.indicator_registry (
+    id INT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    indicator_name VARCHAR(50) NOT NULL COMMENT '指标名',
+    target_column VARCHAR(50) DEFAULT '' COMMENT '对应物理字段',
+    source_table VARCHAR(50) NOT NULL COMMENT '所在表',
+    logic_desc VARCHAR(200) NOT NULL COMMENT '口径描述',
+    remarks VARCHAR(100) DEFAULT '' COMMENT '备注',
+    created_by VARCHAR(50)  NULL COMMENT '创建人',
+    created_time DATETIME  NULL COMMENT '创建日期',
+    updated_by VARCHAR(50)  NULL COMMENT '更新人',
+    updated_time DATETIME  NULL COMMENT '更新日期'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='指标库表';

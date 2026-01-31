@@ -1,0 +1,20 @@
+# Connection configuration example
+# Copy to connections.yaml and fill in actual values
+
+hive:
+  jdbc_url: jdbc:hive2://hive-server:10000/default
+  user: hive_user
+  auth: KERBEROS  # or NONE
+
+impala:
+  host: impala-daemon
+  port: 21000
+  user: impala_user
+  use_ssl: false
+
+doris:
+  fe_host: doris-fe
+  fe_http_port: 8030
+  fe_query_port: 9030
+  user: root
+  password: ""

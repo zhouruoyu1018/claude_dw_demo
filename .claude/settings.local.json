@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(rd /s /q \"E:\\\\claude_demo\\\\dw-requirement-triage\\\\scripts\")",
+      "Bash(zip:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(pip install:*)",
+      "Bash(copy:*)",
+      "Bash(unzip:*)",
+      "Bash(cmd /c \"rmdir /s /q temp_skill\")",
+      "Bash(cmd /c \"del generate-standard-ddl.zip 2>nul\")",
+      "Bash(cmd /c \"dir E:\\\\claude_demo\\\\.claude\\\\skills /b 2>nul || echo empty\")",
+      "Bash(dir:*)",
+      "Bash(mysql:*)",
+      "Bash(psql:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "hive-metadata"
+  ],
+  "mcpServers": {
+    "hive-metadata": {
+      "command": "python",
+      "args": [
+        "E:/claude_demo/search-hive-metadata/scripts/mcp_server.py"
+      ],
+      "env": {
+        "MYSQL_HOST": "127.0.0.1",
+        "MYSQL_USER": "root",
+        "MYSQL_PASSWORD": "123456",
+        "MYSQL_DATABASE": "public",
+        "PG_HOST": "127.0.0.1",
+        "PG_PORT": "5432",
+        "PG_USER": "root",
+        "PG_PASSWORD": "123456",
+        "PG_DATABASE": "phslm"
+      }
+    }
+  }
+}

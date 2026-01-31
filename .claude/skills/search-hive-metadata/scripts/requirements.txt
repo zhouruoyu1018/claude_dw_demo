@@ -1,0 +1,13 @@
+# Hive Metadata Search MCP Server 依赖
+
+# MCP SDK
+mcp>=0.9.0
+
+# MySQL 连接器 (用于 tbl_base_info)
+pymysql>=1.0.0
+
+# PostgreSQL 连接器 (用于 indicator_registry 和 word_root_dict)
+psycopg2-binary>=2.9.0
+
+# 可选：配置文件支持
+pyyaml>=6.0
