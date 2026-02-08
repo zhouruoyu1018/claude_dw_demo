@@ -57,6 +57,13 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 │               │            │                                                │
 │               ▼            │                                                │
 │   ┌───────────────────────┐│                                                │
+│   │ Phase 4.5: SQL 审查    ││ ← review-sql (可选)                           │
+│   │ • 代码规范检查         ││   --review 参数触发                            │
+│   │ • 输出审查报告         ││                                                │
+│   └───────────┬───────────┘│                                                │
+│               │            │                                                │
+│               ▼            │                                                │
+│   ┌───────────────────────┐│                                                │
 │   │ Phase 5: 测试套件      ││ ← generate-qa-suite                           │
 │   │ • 冒烟测试 SQL         ││                                                │
 │   │ • DQC 规则             ││                                                │
@@ -228,9 +235,32 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 ---
 
+### Phase 4.5: SQL 审查 (review-sql) — 可选
+
+**触发条件**: Phase 4 完成 + 用户使用 `--review` 参数或手动请求审查
+
+**执行内容**:
+1. 将 Phase 4 生成的 ETL SQL 作为输入
+2. 执行 review-sql 审查流程（DDL 规则 + ETL 规则 + 通用规则）
+3. 输出审查报告（FATAL/ERROR/WARN/INFO 分级）
+4. 如有 FATAL 项，阻断流程并提示修复
+
+**决策分支**:
+```
+审查结果无 FATAL → 继续 Phase 5
+审查结果有 FATAL → 提示修复，修复后可复查
+用户跳过 → 直接进入 Phase 5
+```
+
+**用户确认点**: 是否接受审查结果并继续
+
+**默认行为**: 跳过（不加 `--review` 时不执行此阶段）
+
+---
+
 ### Phase 5: 测试套件 (generate-qa-suite)
 
-**触发条件**: Phase 4 完成
+**触发条件**: Phase 4（或 Phase 4.5）完成
 
 **执行内容**:
 1. 解析 ETL 上下文（源表、目标表、主键、字段类型）
@@ -292,7 +322,16 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
                                       │ PHASE_4_ETL      │
                                       └────────┬─────────┘
                                                │
-                                               ▼
+                                       ┌───────┴───────┐
+                                       │ --review?     │
+                                       ▼               ▼
+                              ┌──────────────┐   (跳过)
+                              │PHASE_4.5     │     │
+                              │_REVIEW (可选) │     │
+                              └──────┬───────┘     │
+                                     │             │
+                                     └──────┬──────┘
+                                            ▼
                                       ┌──────────────────┐
                                       │ PHASE_5_QA       │
                                       └────────┬─────────┘
@@ -350,7 +389,8 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 | Phase 1 → Phase 2 | 指标名称列表、维度列表、建议分层/引擎 |
 | Phase 2 → Phase 3 | 指标复用结果、现有表搜索结果、粒度匹配判断、词根查询结果 |
 | Phase 3 → Phase 4 | 目标表 DDL（含主键、字段列表、COMMENT） |
-| Phase 4 → Phase 5 | ETL SQL（含源表、加工逻辑）、目标表 DDL |
+| Phase 4 → Phase 4.5 | ETL SQL（可选，--review 时传递） |
+| Phase 4 / 4.5 → Phase 5 | ETL SQL（含源表、加工逻辑）、目标表 DDL |
 | Phase 4 → 指标库 | 新指标注册请求 |
 | Phase 4 → 血缘库 | 表级/字段级血缘关系（自动注册） |
 | Phase 3 → MEMORY.md | 表清单更新（新建/扩列） |
@@ -397,6 +437,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 | `/dw-workflow` | 启动完整流程 |
 | `/dw-workflow --from=ddl` | 从 Phase 3 开始 |
 | `/dw-workflow --step` | 逐步执行，每步确认 |
+| `/dw-workflow --review` | ETL 生成后执行 SQL 审查（Phase 4.5） |
 | `/dw-workflow --dry-run` | 仅分析，不生成文件 |
 
 ---
@@ -581,4 +622,5 @@ LEFT JOIN agg_prev ap ON a.product_code = ap.product_code;
 - `dw-requirement-triage.skill`
 - `generate-standard-ddl.skill`
 - `generate-etl-sql.skill`
+- `review-sql` (可选，Phase 4.5 审查)
 - `generate-qa-suite.skill`

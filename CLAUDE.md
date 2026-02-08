@@ -130,6 +130,7 @@ ods (原始层)      ← 原始数据接入
 | `generate-standard-ddl` | `generate-standard-ddl.skill` | 模型设计，生成符合规范的 DDL 语句 |
 | `generate-etl-sql` | `generate-etl-sql.skill` | ETL 代码生成，编写 Hive/Impala/Doris SQL |
 | `generate-qa-suite` | `generate-qa-suite.skill` | 测试与 DQC 生成，冒烟测试 + 质量规则 + Doris 性能分析 |
+| `review-sql` | `.claude/skills/review-sql/SKILL.md` | SQL 审查，检查现有 DDL/ETL 脚本规范合规性 |
 | `dw-dev-workflow` | `dw-dev-workflow.skill` | **主控工作流**，串联以上所有 skill |
 
 ## Skills 配置
@@ -151,6 +152,9 @@ skills:
   - path: ./generate-qa-suite.skill
     name: generate-qa-suite
     description: 测试套件生成
+  - path: ./.claude/skills/review-sql/SKILL.md
+    name: review-sql
+    description: SQL 审查
 ```
 
 ### 使用方式
