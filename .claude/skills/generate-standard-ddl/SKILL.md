@@ -300,147 +300,30 @@ DDL 中字段按以下顺序排列：
 
 #### 自动识别分层
 
-在生成 DDL 前，自动根据表名或数据库名识别分层：
+识别优先级：数据库名 > 表名前缀 > `dw-requirement-triage` 建议，默认 DM 层。
 
-**识别规则**:
-1. **从数据库名识别**: `ods.table` → ODS 层
-2. **从表名前缀识别**: `dmm_sac_` → DM 层，`da_sac_` → DA 层
-3. **从用户提供的分层建议**: `dw-requirement-triage` 输出的分层字段
-
-**识别示例**:
-
-```python
-# 伪代码
-def detect_layer(schema, table_name):
-    # 优先级 1: 从数据库名识别
-    if schema in ['ods']:
-        return 'ODS'
-    elif schema in ['dwd']:
-        return 'DWD'
-    elif schema in ['dwm']:
-        return 'DWM'
-    elif schema in ['dws']:
-        return 'DWS'
-    elif schema in ['dm']:
-        return 'DM'
-    elif schema in ['da']:
-        return 'DA'
-    elif schema in ['dim']:
-        return 'DIM'
-
-    # 优先级 2: 从表名前缀识别
-    if table_name.startswith('ods_'):
-        return 'ODS'
-    elif table_name.startswith('dwd_'):
-        return 'DWD'
-    elif table_name.startswith('dwm_'):
-        return 'DWM'
-    elif table_name.startswith('dws_'):
-        return 'DWS'
-    elif table_name.startswith('dmm_') or table_name.startswith('dm_'):
-        return 'DM'
-    elif table_name.startswith('da_'):
-        return 'DA'
-    elif table_name.startswith('dim_'):
-        return 'DIM'
-
-    # 默认: DM 层（使用规范 A）
-    return 'DM'
-
-# 应用规范
-layer = detect_layer('dm', 'dmm_sac_loan_prod_daily')  # → 'DM'
-schema = 'A' if layer in ['DWM', 'DWS', 'DM', 'DIM'] else 'B'
-```
-
-**输出示例**:
-
-```
-检测到分层: DM (数据集市层)
-应用规范: 规范 A (标准规范)
-理由: 核心指标宽表，性能关键
-```
+| 数据库/前缀 | 分层 | 规范 |
+|------------|------|------|
+| `ods` / `ods_` | ODS | B |
+| `dwd` / `dwd_` | DWD | B |
+| `dwm` / `dwm_` | DWM | A |
+| `dws` / `dws_` | DWS | A |
+| `dm` / `dmm_` / `dm_` | DM | A |
+| `da` / `da_` | DA | B |
+| `dim` / `dim_` | DIM | A |
 
 ---
 
 ## Step 5: 生成 DDL
 
-### 5.1 CREATE TABLE 模板 (Hive)
+DDL 模板（CREATE TABLE / ALTER TABLE）及 Impala/Doris 语法见 [references/ddl-templates.md](references/ddl-templates.md)。
 
-```sql
--- ============================================================
--- 表名:    {schema}.{table_name}
--- 功能:    {表功能描述}
--- 作者:    {author}
--- 创建日期: {YYYY-MM-DD}
--- 修改记录:
---   {YYYY-MM-DD} {author} 初始创建
--- ============================================================
+### 5.1 必须遵守的规则
 
-DROP TABLE IF EXISTS {schema}.{table_name};
-
-CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
-    -- ===== 维度字段 =====
-    {dim_col_1}    {TYPE}    COMMENT '{中文注释}',
-    {dim_col_2}    {TYPE}    COMMENT '{中文注释}',
-
-    -- ===== 布尔字段 =====
-    {bool_col}     TINYINT   COMMENT '{中文注释}，0-否 1-是',
-
-    -- ===== 指标字段 =====
-    {metric_col_1} {TYPE}    COMMENT '{中文注释}',
-    {metric_col_2} {TYPE}    COMMENT '{中文注释}'
-)
-COMMENT '{表中文注释}[粒度:{维度字段1},{维度字段2}]'
-PARTITIONED BY (dt STRING COMMENT '数据日期，格式YYYY-MM-DD')
-STORED AS PARQUET
-TBLPROPERTIES (
-    'parquet.compression' = 'SNAPPY',
-    'logical_primary_key' = '{col1},{col2},...',
-    'business_owner' = '{业务负责人}',
-    'data_layer' = '{dm|da}'
-);
-```
-
-### 5.2 ALTER TABLE 模板
-
-当走 CASE A（扩列）时：
-
-```sql
--- ============================================================
--- 表名:    {schema}.{table_name}
--- 变更:    新增 {N} 个字段 — {变更原因}
--- 作者:    {author}
--- 变更日期: {YYYY-MM-DD}
--- ============================================================
-
-ALTER TABLE {schema}.{table_name} ADD COLUMNS (
-    {new_col_1}    {TYPE}    COMMENT '{中文注释}',
-    {new_col_2}    {TYPE}    COMMENT '{中文注释}'
-) CASCADE;
-```
-
-**重要提示：**
-- **分区表必须加 `CASCADE`**：确保新增字段应用到所有已存在的分区，否则旧分区无法查到新字段
-- 非分区表可省略 `CASCADE`，但加上也无副作用
-
-### 5.3 TBLPROPERTIES 必填项
-
-Hive 表的 TBLPROPERTIES **必须**包含以下属性：
-
-| 属性 | 说明 | 示例 |
-|------|------|------|
-| `logical_primary_key` | **必填** — 逻辑主键，逗号分隔 | `'loan_id,dt'` |
-| `orc.compress` | 压缩算法 | `'SNAPPY'` |
-| `business_owner` | 业务归属人/团队 | `'数据组'` |
-| `data_layer` | 所属分层 | `'dm'` 或 `'da'` |
-
-### 5.4 分区策略
-
-| 场景 | 分区方式 |
-|------|---------|
-| 日粒度聚合 | `PARTITIONED BY (dt STRING)` |
-| 多维分区（少量枚举） | `PARTITIONED BY (dt STRING, product_code STRING)` |
-| 全量快照 | `PARTITIONED BY (dt STRING)` |
+- **TBLPROPERTIES 必填**: `logical_primary_key`（逻辑主键）、`business_owner`、`data_layer`
+- **ALTER TABLE 分区表必须加 `CASCADE`**: 确保新字段应用到已有分区
+- **分区策略**: 日粒度用 `PARTITIONED BY (dt STRING)`，多维用 `(dt STRING, {enum_col} STRING)`
+- **COMMENT**: 表注释末尾必须附加粒度声明 `[粒度:col1,col2]`
 
 ---
 
@@ -469,50 +352,17 @@ Hive 表的 TBLPROPERTIES **必须**包含以下属性：
 
 ## 完整示例
 
-**输入需求：** 按日+产品维度统计放款金额、放款笔数、平均授信额度
+**需求：** 按日+产品维度统计放款金额、放款笔数、平均授信额度
 
-**Step 1:** 分层 = dm，表名 = `dmm_sac_loan_prod_daily`
+| Step | 动作 | 结果 |
+|------|------|------|
+| 1 | 确定分层与表名 | dm → `dmm_sac_loan_prod_daily` |
+| 2 | 建模决策 | 未找到同粒度同主题表 → CASE B 新建 |
+| 3 | 查词根表 | `td_sum_loan_amt`, `td_cnt_loan`, `td_avg_credit_amt` |
+| 4 | 排序 + 类型 | DM 层 → 规范 A（DECIMAL(18,2) / BIGINT） |
+| 5 | 生成 DDL | CREATE TABLE + TBLPROPERTIES（含 logical_primary_key） |
 
-**Step 2:** 搜索候选表 → 未找到同粒度同主题表 → CASE B 新建
-
-**Step 3:** 查词根表 → loan_amt(放款金额), loan(放款), credit_amt(授信额度)
-
-**Step 4:** 排序 + 类型选择
-
-**Step 5:** 生成 DDL
-
-```sql
--- ============================================================
--- 表名:    dm.dmm_sac_loan_prod_daily
--- 功能:    贷款产品日维度指标宽表
--- 作者:    auto-generated
--- 创建日期: 2026-01-27
--- 修改记录:
---   2026-01-27 auto-generated 初始创建
--- ============================================================
-
-DROP TABLE IF EXISTS dm.dmm_sac_loan_prod_daily;
-
-CREATE TABLE IF NOT EXISTS dm.dmm_sac_loan_prod_daily (
-    -- ===== 维度字段 =====
-    product_code          STRING          COMMENT '产品编码',
-    product_name          STRING          COMMENT '产品名称',
-
-    -- ===== 指标字段 =====
-    td_sum_loan_amt       DECIMAL(18,2)   COMMENT '当日放款总金额，单位：元',
-    td_cnt_loan           BIGINT          COMMENT '当日放款笔数',
-    td_avg_credit_amt     DECIMAL(18,2)   COMMENT '当日平均授信额度，单位：元'
-)
-COMMENT '贷款产品日维度指标宽表，T+1更新[粒度:product_code,dt]'
-PARTITIONED BY (dt STRING COMMENT '数据日期，格式YYYY-MM-DD')
-STORED AS PARQUET
-TBLPROPERTIES (
-    'parquet.compression' = 'SNAPPY',
-    'logical_primary_key' = 'product_code,dt',
-    'business_owner' = '数据组',
-    'data_layer' = 'dm'
-);
-```
+详见 [references/ddl-templates.md](references/ddl-templates.md) 获取完整 DDL 模板。
 
 ---
 

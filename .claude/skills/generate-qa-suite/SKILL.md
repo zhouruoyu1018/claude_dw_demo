@@ -203,156 +203,23 @@ DQC 规则是系统化的质量检查，可接入调度平台（如 Airflow、Do
 
 ### 3.2 规则分类与模板
 
-#### 3.2.1 完整性规则 (Completeness)
+根据字段特征自动匹配规则，每类规则的完整 SQL 模板见 [references/dqc-rules-catalog.md](references/dqc-rules-catalog.md)。
 
-```sql
--- [DQC-C01] 表非空
-SELECT 'DQC-C01: 表非空' AS rule_id,
-       '{target_table}' AS target,
-       COUNT(*) AS actual,
-       'COUNT > 0' AS expected,
-       CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS result
-FROM {target_table}
-WHERE dt = '${dt}';
-
--- [DQC-C02] 关键字段非 NULL
-SELECT 'DQC-C02: {col} 非NULL' AS rule_id,
-       '{target_table}.{col}' AS target,
-       SUM(CASE WHEN {col} IS NULL THEN 1 ELSE 0 END) AS null_cnt,
-       '0' AS expected,
-       CASE WHEN SUM(CASE WHEN {col} IS NULL THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM {target_table}
-WHERE dt = '${dt}';
-
--- [DQC-C03] 非空字符串（排除空串）
-SELECT 'DQC-C03: {col} 非空串' AS rule_id,
-       SUM(CASE WHEN {col} IS NULL OR TRIM({col}) = '' THEN 1 ELSE 0 END) AS empty_cnt,
-       CASE WHEN SUM(CASE WHEN {col} IS NULL OR TRIM({col}) = '' THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM {target_table}
-WHERE dt = '${dt}';
-```
-
-#### 3.2.2 唯一性规则 (Uniqueness)
-
-```sql
--- [DQC-U01] 主键唯一
-SELECT 'DQC-U01: 主键唯一' AS rule_id,
-       '{pk_cols}' AS target,
-       COUNT(*) AS dup_group_cnt,
-       '0' AS expected,
-       CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS result
-FROM (
-    SELECT {pk_cols}, COUNT(*) AS cnt
-    FROM {target_table}
-    WHERE dt = '${dt}'
-    GROUP BY {pk_cols}
-    HAVING COUNT(*) > 1
-) t;
-```
-
-#### 3.2.3 有效性规则 (Validity)
-
-```sql
--- [DQC-V01] 金额非负
-SELECT 'DQC-V01: {amt_col} >= 0' AS rule_id,
-       SUM(CASE WHEN {amt_col} < 0 THEN 1 ELSE 0 END) AS negative_cnt,
-       CASE WHEN SUM(CASE WHEN {amt_col} < 0 THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM {target_table}
-WHERE dt = '${dt}';
-
--- [DQC-V02] 比率范围 [0, 1]
-SELECT 'DQC-V02: {rat_col} in [0,1]' AS rule_id,
-       SUM(CASE WHEN {rat_col} < 0 OR {rat_col} > 1 THEN 1 ELSE 0 END) AS out_of_range_cnt,
-       CASE WHEN SUM(CASE WHEN {rat_col} < 0 OR {rat_col} > 1 THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM {target_table}
-WHERE dt = '${dt}';
-
--- [DQC-V03] 布尔值枚举 {0, 1}
-SELECT 'DQC-V03: {bool_col} in (0,1)' AS rule_id,
-       SUM(CASE WHEN {bool_col} NOT IN (0, 1) THEN 1 ELSE 0 END) AS invalid_cnt,
-       CASE WHEN SUM(CASE WHEN {bool_col} NOT IN (0, 1) THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM {target_table}
-WHERE dt = '${dt}';
-
--- [DQC-V04] 计数非负
-SELECT 'DQC-V04: {cnt_col} >= 0' AS rule_id,
-       SUM(CASE WHEN {cnt_col} < 0 THEN 1 ELSE 0 END) AS negative_cnt,
-       CASE WHEN SUM(CASE WHEN {cnt_col} < 0 THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM {target_table}
-WHERE dt = '${dt}';
-
--- [DQC-V05] 日期格式 (YYYY-MM-DD)
-SELECT 'DQC-V05: {date_col} 格式' AS rule_id,
-       SUM(CASE WHEN {date_col} NOT RLIKE '^\\d{4}-\\d{2}-\\d{2}$' THEN 1 ELSE 0 END) AS bad_fmt_cnt,
-       CASE WHEN SUM(CASE WHEN {date_col} NOT RLIKE '^\\d{4}-\\d{2}-\\d{2}$' THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM {target_table}
-WHERE dt = '${dt}';
-```
-
-#### 3.2.4 一致性规则 (Consistency)
-
-```sql
--- [DQC-CS01] 引用完整性（维度编码在维表中存在）
-SELECT 'DQC-CS01: {code_col} 引用完整' AS rule_id,
-       COUNT(*) AS orphan_cnt,
-       CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'WARN' END AS result
-FROM {target_table} t
-LEFT JOIN {dim_table} d ON t.{code_col} = d.{code_col}
-WHERE t.dt = '${dt}'
-  AND d.{code_col} IS NULL
-  AND t.{code_col} IS NOT NULL;
-
--- [DQC-CS02] 跨层数据一致（汇总层 vs 明细层）
-SELECT 'DQC-CS02: 金额汇总一致' AS rule_id,
-       ABS(tgt_sum - src_sum) AS diff,
-       CASE WHEN ABS(tgt_sum - src_sum) < 0.01 THEN 'PASS' ELSE 'FAIL' END AS result
-FROM (
-    SELECT
-        (SELECT SUM({amt_col}) FROM {target_table} WHERE dt = '${dt}') AS tgt_sum,
-        (SELECT SUM({src_amt_col}) FROM {source_table} WHERE dt = '${dt}') AS src_sum
-) t;
-```
-
-#### 3.2.5 波动率规则 (Volatility)
-
-```sql
--- [DQC-VOL01] 行数波动（T vs T-1）
-SELECT 'DQC-VOL01: 行数波动' AS rule_id,
-       today_cnt, yesterday_cnt,
-       ROUND(ABS(today_cnt - yesterday_cnt) / NULLIF(yesterday_cnt, 0), 4) AS volatility,
-       CASE
-           WHEN yesterday_cnt = 0 AND today_cnt > 0 THEN 'PASS: 首次写入'
-           WHEN yesterday_cnt = 0 AND today_cnt = 0 THEN 'WARN: 连续为空'
-           WHEN ABS(today_cnt - yesterday_cnt) / yesterday_cnt > 0.5 THEN 'WARN: 波动 >50%'
-           ELSE 'PASS'
-       END AS result
-FROM (
-    SELECT
-        (SELECT COUNT(*) FROM {target_table} WHERE dt = '${dt}') AS today_cnt,
-        (SELECT COUNT(*) FROM {target_table} WHERE dt = DATE_ADD('${dt}', -1)) AS yesterday_cnt
-) t;
-
--- [DQC-VOL02] 指标波动（T vs T-1）
-SELECT 'DQC-VOL02: {metric_col} 波动' AS rule_id,
-       today_val, yesterday_val,
-       ROUND(ABS(today_val - yesterday_val) / NULLIF(yesterday_val, 0), 4) AS volatility,
-       CASE
-           WHEN ABS(today_val - yesterday_val) / NULLIF(yesterday_val, 0) > 1.0 THEN 'WARN: 波动 >100%'
-           ELSE 'PASS'
-       END AS result
-FROM (
-    SELECT
-        (SELECT SUM({metric_col}) FROM {target_table} WHERE dt = '${dt}') AS today_val,
-        (SELECT SUM({metric_col}) FROM {target_table} WHERE dt = DATE_ADD('${dt}', -1)) AS yesterday_val
-) t;
-```
+| 规则类别 | 规则编号 | 检查内容 | 适用字段特征 |
+|---------|---------|---------|------------|
+| 完整性 | DQC-C01 | 表非空 | 全表 |
+| 完整性 | DQC-C02 | 非 NULL | 逻辑主键、维度编码 |
+| 完整性 | DQC-C03 | 非空串 | STRING 类型维度字段 |
+| 唯一性 | DQC-U01 | 主键唯一 | `logical_primary_key` |
+| 有效性 | DQC-V01 | 非负 | 金额 `DECIMAL` + `_amt` |
+| 有效性 | DQC-V02 | 范围 [0,1] | 比率 `DECIMAL` + `_rat` |
+| 有效性 | DQC-V03 | 枚举 {0,1} | 布尔 `TINYINT` + `is_`/`has_` |
+| 有效性 | DQC-V04 | 非负 | 计数 `BIGINT` + `_cnt` |
+| 有效性 | DQC-V05 | 日期格式 | `STRING` + `_date` |
+| 一致性 | DQC-CS01 | 引用完整 | 维度编码 → 维度表 |
+| 一致性 | DQC-CS02 | 跨层金额一致 | 汇总金额 vs 明细金额 |
+| 波动率 | DQC-VOL01 | 行数波动 | 全表 T vs T-1 (阈值 50%) |
+| 波动率 | DQC-VOL02 | 指标波动 | 核心指标 T vs T-1 (阈值 100%) |
 
 ### 3.3 规则严重级别
 
@@ -403,65 +270,18 @@ ORDER BY
 
 ### 4.1 EXPLAIN 分析
 
-```sql
--- [PERF-01] 查看执行计划
-EXPLAIN
-SELECT {etl_query_body};
+对 ETL 查询生成三级 EXPLAIN：`EXPLAIN` / `EXPLAIN VERBOSE` / `EXPLAIN GRAPH`
 
--- [PERF-02] 查看详细执行计划（含统计信息）
-EXPLAIN VERBOSE
-SELECT {etl_query_body};
+### 4.2 关注点速查
 
--- [PERF-03] 查看物理执行计划
-EXPLAIN GRAPH
-SELECT {etl_query_body};
-```
+| 算子 | 关注点 | 优化方向 |
+|------|--------|---------|
+| `OlapScanNode` | 扫描行数 | 分区裁剪、物化视图 |
+| `HASH JOIN` | 右表大小 | Broadcast vs Shuffle |
+| `EXCHANGE` | Shuffle 量 | Colocate Join |
+| `Predicates` | 谓词下推 | 确认分区/桶裁剪生效 |
 
-### 4.2 EXPLAIN 关注点
-
-生成 EXPLAIN 后，自动给出检查清单：
-
-| 检查项 | 关注点 | 优化方向 |
-|--------|--------|---------|
-| `OlapScanNode` | 扫描行数是否过大 | 检查分区裁剪、物化视图 |
-| `HASH JOIN` | 右表大小、Join 类型 | 小表 Broadcast vs Shuffle |
-| `AGGREGATE` | 聚合方式 | 预聚合模型 vs 实时聚合 |
-| `SORT` | 是否全局排序 | 避免不必要的 ORDER BY |
-| `EXCHANGE` | 数据 Shuffle 量 | Colocate Join 消除 Shuffle |
-| `Predicates` | 谓词是否下推到 Scan 层 | 确认分区/桶裁剪生效 |
-
-### 4.3 Profile 分析（运行后）
-
-```sql
--- 启用 Profile 收集
-SET is_report_success = true;
-
--- 执行 ETL SQL
-{etl_sql};
-
--- 查看最近 Profile
-SHOW QUERY PROFILE '/';
--- 查看指定 Query Profile
-SHOW QUERY PROFILE '/{query_id}';
-```
-
-### 4.4 Doris 特有检查
-
-```sql
--- [PERF-D01] 表统计信息是否更新
-SHOW TABLE STATS {target_table};
-
--- [PERF-D02] Tablet 分布是否均匀
-SHOW TABLETS FROM {target_table};
-
--- [PERF-D03] Compaction 状态
-SHOW TABLET {tablet_id};
-
--- [PERF-D04] 物化视图命中情况
-EXPLAIN
-SELECT {query_with_agg};
--- 检查输出中是否出现 rollup: {mv_name}
-```
+详见 [references/doris-explain-guide.md](references/doris-explain-guide.md) 获取 Profile 分析、Tablet/Compaction 检查等完整方法。
 
 ---
 
@@ -486,121 +306,39 @@ SELECT {query_with_agg};
 
 ## 完整示例
 
-**目标表**: `dm.dmm_sac_loan_prod_daily`
-**逻辑主键**: `product_code, dt`
-**字段**: `product_code STRING`, `product_name STRING`, `td_sum_loan_amt DECIMAL(18,2)`, `td_cnt_loan BIGINT`, `is_first_loan TINYINT`, `rat_overdue_m1 DECIMAL(10,4)`
+**目标表**: `dm.dmm_sac_loan_prod_daily`，**逻辑主键**: `product_code, dt`，**引擎**: Hive
 
-**自动生成的规则匹配：**
+**自动规则匹配结果：**
 
 | 字段 | 特征 | 命中规则 |
 |------|------|---------|
-| `product_code, dt` | 逻辑主键 | DQC-U01 唯一性 |
-| `product_code` | 维度编码 `_code` | DQC-C02 非NULL, DQC-CS01 引用完整 |
-| `td_sum_loan_amt` | 金额 `DECIMAL` + `_amt` | DQC-V01 非负, DQC-VOL02 波动 |
-| `td_cnt_loan` | 计数 `BIGINT` + `_cnt` | DQC-V04 非负 |
-| `is_first_loan` | 布尔 `TINYINT` + `is_` | DQC-V03 枚举{0,1} |
-| `rat_overdue_m1` | 比率 `DECIMAL(10,4)` + `rat_` | DQC-V02 范围[0,1] |
-| 全表 | — | S-01 非空, S-02 行数对比, DQC-VOL01 行数波动 |
+| `product_code, dt` | 逻辑主键 | DQC-U01 |
+| `product_code` | 维度编码 `_code` | DQC-C02, DQC-CS01 |
+| `td_sum_loan_amt` | 金额 `DECIMAL` + `_amt` | DQC-V01, DQC-VOL02 |
+| `td_cnt_loan` | 计数 `BIGINT` + `_cnt` | DQC-V04 |
+| `is_first_loan` | 布尔 `TINYINT` + `is_` | DQC-V03 |
+| `rat_overdue_m1` | 比率 `DECIMAL(10,4)` + `rat_` | DQC-V02 |
+| 全表 | — | S-01, S-02, DQC-VOL01 |
 
-**生成输出（Hive）：**
+根据匹配结果，自动生成包含 Part 1 冒烟测试 (S-01~S-06) + Part 2 DQC 规则的完整 SQL 脚本。
 
-```sql
--- ============================================================
--- QA Suite: dm.dmm_sac_loan_prod_daily
--- 生成时间: 2026-01-27
--- 引擎: Hive
--- ============================================================
+---
 
--- ==================== Part 1: 冒烟测试 ====================
+## 踩坑记录联动 (Pitfalls Integration)
 
--- [S-01] 目标表行数
-SELECT 'S-01' AS test_id, COUNT(*) AS result,
-       CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FATAL' END AS status
-FROM dm.dmm_sac_loan_prod_daily WHERE dt = '${hivevar:dt}';
+当用户报告 DQC 规则捕获了**真实数据缺陷**（而非规则本身的误报），自动将该缺陷记录到 auto memory 目录下的 `pitfalls.md` 的"DQC 捕获的真实缺陷"区。
 
--- [S-02] 行数对比
-SELECT 'S-02' AS test_id, src_cnt, tgt_cnt,
-       ROUND(tgt_cnt / NULLIF(src_cnt, 0), 4) AS ratio
-FROM (
-    SELECT
-        (SELECT COUNT(*) FROM dwd.dwd_loan_detail WHERE dt = '${hivevar:dt}') AS src_cnt,
-        (SELECT COUNT(*) FROM dm.dmm_sac_loan_prod_daily WHERE dt = '${hivevar:dt}') AS tgt_cnt
-) t;
-
--- [S-03] 主键唯一性
-SELECT 'S-03' AS test_id, COUNT(*) AS dup_cnt,
-       CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FATAL' END AS status
-FROM (
-    SELECT product_code FROM dm.dmm_sac_loan_prod_daily
-    WHERE dt = '${hivevar:dt}'
-    GROUP BY product_code HAVING COUNT(*) > 1
-) dup;
-
--- [S-05] 数据样本
-SELECT * FROM dm.dmm_sac_loan_prod_daily
-WHERE dt = '${hivevar:dt}' LIMIT 20;
-
--- ==================== Part 2: DQC 规则 ====================
-
--- [DQC-C02] product_code 非 NULL
-SELECT 'DQC-C02' AS rule_id, 'product_code' AS col,
-       SUM(CASE WHEN product_code IS NULL THEN 1 ELSE 0 END) AS null_cnt,
-       CASE WHEN SUM(CASE WHEN product_code IS NULL THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM dm.dmm_sac_loan_prod_daily WHERE dt = '${hivevar:dt}';
-
--- [DQC-U01] 主键唯一
-SELECT 'DQC-U01' AS rule_id, COUNT(*) AS dup_group_cnt,
-       CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS result
-FROM (
-    SELECT product_code, COUNT(*) FROM dm.dmm_sac_loan_prod_daily
-    WHERE dt = '${hivevar:dt}'
-    GROUP BY product_code HAVING COUNT(*) > 1
-) t;
-
--- [DQC-V01] td_sum_loan_amt 非负
-SELECT 'DQC-V01' AS rule_id, 'td_sum_loan_amt' AS col,
-       SUM(CASE WHEN td_sum_loan_amt < 0 THEN 1 ELSE 0 END) AS negative_cnt,
-       CASE WHEN SUM(CASE WHEN td_sum_loan_amt < 0 THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM dm.dmm_sac_loan_prod_daily WHERE dt = '${hivevar:dt}';
-
--- [DQC-V02] rat_overdue_m1 范围 [0,1]
-SELECT 'DQC-V02' AS rule_id, 'rat_overdue_m1' AS col,
-       SUM(CASE WHEN rat_overdue_m1 < 0 OR rat_overdue_m1 > 1 THEN 1 ELSE 0 END) AS out_cnt,
-       CASE WHEN SUM(CASE WHEN rat_overdue_m1 < 0 OR rat_overdue_m1 > 1 THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM dm.dmm_sac_loan_prod_daily WHERE dt = '${hivevar:dt}';
-
--- [DQC-V03] is_first_loan 枚举 {0,1}
-SELECT 'DQC-V03' AS rule_id, 'is_first_loan' AS col,
-       SUM(CASE WHEN is_first_loan NOT IN (0, 1) THEN 1 ELSE 0 END) AS invalid_cnt,
-       CASE WHEN SUM(CASE WHEN is_first_loan NOT IN (0, 1) THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM dm.dmm_sac_loan_prod_daily WHERE dt = '${hivevar:dt}';
-
--- [DQC-V04] td_cnt_loan 非负
-SELECT 'DQC-V04' AS rule_id, 'td_cnt_loan' AS col,
-       SUM(CASE WHEN td_cnt_loan < 0 THEN 1 ELSE 0 END) AS negative_cnt,
-       CASE WHEN SUM(CASE WHEN td_cnt_loan < 0 THEN 1 ELSE 0 END) = 0
-            THEN 'PASS' ELSE 'FAIL' END AS result
-FROM dm.dmm_sac_loan_prod_daily WHERE dt = '${hivevar:dt}';
-
--- [DQC-VOL01] 行数波动
-SELECT 'DQC-VOL01' AS rule_id,
-       today_cnt, yesterday_cnt,
-       ROUND(ABS(today_cnt - yesterday_cnt) / NULLIF(yesterday_cnt, 0), 4) AS volatility,
-       CASE
-           WHEN yesterday_cnt = 0 AND today_cnt > 0 THEN 'PASS'
-           WHEN ABS(today_cnt - yesterday_cnt) / NULLIF(yesterday_cnt, 0) > 0.5 THEN 'WARN'
-           ELSE 'PASS'
-       END AS result
-FROM (
-    SELECT
-        (SELECT COUNT(*) FROM dm.dmm_sac_loan_prod_daily WHERE dt = '${hivevar:dt}') AS today_cnt,
-        (SELECT COUNT(*) FROM dm.dmm_sac_loan_prod_daily WHERE dt = DATE_ADD('${hivevar:dt}', -1)) AS yesterday_cnt
-) t;
+**记录格式**：
+```markdown
+### D-{序号}: {缺陷简述}
+- 日期: {当天日期}
+- 表: {目标表}
+- 规则: {DQC 规则编号}
+- 原因: {根因分析}
+- 修正: {ETL 侧的修正方式}
 ```
+
+**触发条件**：用户在 review QA 结果时确认某条 DQC FAIL/WARN 是真实问题（非预期行为）。
 
 ---
 

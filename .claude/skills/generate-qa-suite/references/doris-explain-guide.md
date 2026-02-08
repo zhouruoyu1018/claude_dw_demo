@@ -231,6 +231,26 @@ JOIN [shuffle] big_table_2 t2
     ON t1.key = t2.key;
 ```
 
+## 4.5 表级统计与 Tablet 诊断
+
+ETL 写入完成后，使用以下命令检查目标表的物理状态：
+
+```sql
+-- 查看表的行数、数据量、副本数等统计信息
+SHOW TABLE STATS {target_table};
+
+-- 查看表的所有 Tablet 分布（确认数据是否均匀）
+SHOW TABLETS FROM {target_table};
+
+-- 查看指定 Tablet 的详情（定位数据倾斜或副本异常）
+SHOW TABLET {tablet_id};
+```
+
+**使用场景**：
+- ETL 后验证写入行数是否符合预期
+- 排查数据倾斜（某些 Tablet 数据量远超其他）
+- 确认副本状态（NORMAL / CLONE / DECOMMISSION）
+
 ---
 
 ## 5. Profile 运行时分析

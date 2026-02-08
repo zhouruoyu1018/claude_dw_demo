@@ -341,10 +341,14 @@ LEFT JOIN window_metrics w ON ...
 
 ### 自检清单 (Self-Check)
 
-在输出逻辑流后，**必须执行以下自检**并标注结果：
+在输出逻辑流后，**必须执行以下自检**并标注结果。
+
+自检分两部分：**固定检查项**（每次必检）+ **动态检查项**（从踩坑记录加载）。
+
+#### 固定检查项
 
 ```
-🔍 自检清单:
+🔍 自检清单（固定项）:
 ┌────────────────────────────────────────────────────────────┐
 │ 检查项                              │ 结果   │ 备注        │
 ├────────────────────────────────────────────────────────────┤
@@ -356,6 +360,36 @@ LEFT JOIN window_metrics w ON ...
 │ 6. 窗口函数的 PARTITION/ORDER 是否正确?│ N/A    │ 本次未使用窗口函数  │
 └────────────────────────────────────────────────────────────┘
 ```
+
+#### 动态检查项（从 pitfalls.md 加载）
+
+**执行步骤**：在开始自检前，读取 auto memory 目录下的 `pitfalls.md` 文件，检查本次 ETL 涉及的源表是否有已记录的已知问题。
+
+```
+🔍 自检清单（动态项 — 来自踩坑记录）:
+┌────────────────────────────────────────────────────────────┐
+│ 检查项                              │ 结果   │ 来源        │
+├────────────────────────────────────────────────────────────┤
+│ (从 pitfalls.md 中匹配本次涉及的     │        │             │
+│  源表，逐条列出相关的已知问题)        │        │             │
+│                                     │        │             │
+│ 示例:                                │        │             │
+│ P-001: dim_product 无分区，不应加     │ ✅ 已规避│ pitfalls.md │
+│        dt 过滤                       │        │             │
+│ P-002: dwd_loan_detail.loan_amount  │ ⚠️ 待确认│ pitfalls.md │
+│        含负值（退款冲正）             │        │             │
+└────────────────────────────────────────────────────────────┘
+```
+
+若 `pitfalls.md` 为空或无匹配记录，输出"动态检查项：无（踩坑记录中暂无涉及本次源表的已知问题）"。
+
+#### 错误记录（自检发现问题时）
+
+当自检发现问题，或用户在 review 时指出 ETL 错误，**自动追加到 pitfalls.md**：
+
+- 涉及**源表特性**（如某字段含 NULL/负值）→ 写入"源表已知特性"区
+- 涉及**ETL 编写错误**（如误加分区过滤）→ 写入"ETL 常见错误"区
+- 由 DQC 规则捕获的真实缺陷 → 写入"DQC 捕获的真实缺陷"区
 
 ### 自检项详解
 
@@ -667,147 +701,34 @@ WHERE dt = '${dt}'
 
 ## 高级能力
 
-### Window Functions（窗口函数）
+根据映射逻辑复杂度，自动选择 SQL 模式：
 
-支持场景及对应模式：
+| 场景 | 关键函数/语法 | CTE 策略 |
+|------|-------------|---------|
+| 环比/同比 | `LAG`/`LEAD` | 独立 CTE `win_xxx`，与聚合 CTE 分离后 JOIN |
+| 排名 | `ROW_NUMBER`/`RANK`/`DENSE_RANK` | 同上 |
+| 累计/移动平均 | `SUM/AVG OVER (ROWS ...)` | 同上 |
+| 多表关联 | CTE 拆解: `base` → `dim_xxx` → `agg_xxx` → `final` | 先聚合再 JOIN，避免膨胀 |
+| Semi Join | `EXISTS` / `LEFT SEMI JOIN` (Hive/Impala) | 存在性判断，不取字段 |
+| 多维组合 | `GROUPING SETS` / `CUBE` / `ROLLUP` | COALESCE 填充"全部"，配合 GROUPING_ID |
 
-| 场景 | 函数 | 示例 |
-|------|------|------|
-| 环比/同比 | `LAG` / `LEAD` | `LAG(amt, 1) OVER (PARTITION BY prod ORDER BY dt)` |
-| 排名 | `ROW_NUMBER` / `RANK` / `DENSE_RANK` | `ROW_NUMBER() OVER (PARTITION BY cust ORDER BY amt DESC)` |
-| 累计值 | `SUM(...) OVER (... ROWS UNBOUNDED PRECEDING)` | 累计放款金额 |
-| 移动平均 | `AVG(...) OVER (... ROWS N PRECEDING)` | 7日移动平均 |
-| 首末值 | `FIRST_VALUE` / `LAST_VALUE` | 首次放款日期 |
+**引擎差异**: Hive `GROUPING__ID` (双下划线) vs Impala/Doris `GROUPING_ID()` (函数)
 
-**CTE 拆解模式：** 窗口函数计算放在独立 CTE 中，与聚合 CTE 分离后 JOIN：
-
-```sql
-WITH
-agg AS (
-    SELECT product_code, dt,
-           SUM(loan_amt) AS td_sum_loan_amt
-    FROM dwd.dwd_loan_detail
-    WHERE dt = '${dt}'
-    GROUP BY product_code, dt
-),
-win AS (
-    SELECT product_code, dt,
-           td_sum_loan_amt,
-           LAG(td_sum_loan_amt, 1) OVER (
-               PARTITION BY product_code ORDER BY dt
-           ) AS yd_sum_loan_amt
-    FROM agg
-)
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily PARTITION (dt)
-SELECT
-    w.product_code,
-    w.td_sum_loan_amt,
-    w.td_sum_loan_amt - COALESCE(w.yd_sum_loan_amt, 0)
-                                         AS td_diff_loan_amt,  -- 日环比差值
-    w.dt
-FROM win w;
-```
-
-### 复杂 JOIN
-
-#### 多表关联组装
-
-```sql
-WITH
--- 主维度: 当日放款明细
-base AS (
-    SELECT loan_id, product_code, channel_code, loan_amount, cust_id
-    FROM dwd.dwd_loan_detail
-    WHERE dt = '${dt}'
-),
--- 关联: 客户维度
-dim_cust AS (
-    SELECT cust_id, cust_name, cust_level
-    FROM dim.dim_customer
-    WHERE dt = '${dt}'
-),
--- 关联: 历史逾期
-his_overdue AS (
-    SELECT loan_id, MAX(overdue_days) AS his_max_overdue_days
-    FROM dwd.dwd_overdue_detail
-    WHERE dt <= '${dt}'
-    GROUP BY loan_id
-)
-SELECT
-    b.product_code,
-    dc.cust_level,
-    SUM(b.loan_amount)                   AS td_sum_loan_amt,
-    MAX(ho.his_max_overdue_days)         AS his_max_overdue_days,
-    '${dt}'                              AS dt
-FROM base b
-LEFT JOIN dim_cust dc ON b.cust_id = dc.cust_id
-LEFT JOIN his_overdue ho ON b.loan_id = ho.loan_id
-GROUP BY b.product_code, dc.cust_level;
-```
-
-#### Semi Join（存在性判断）
-
-```sql
--- 判断"是否有逾期记录"，不需要取逾期字段
-WHERE EXISTS (
-    SELECT 1 FROM dwd.dwd_overdue_detail od
-    WHERE od.loan_id = src.loan_id
-      AND od.overdue_days > 0
-)
--- 或使用 LEFT SEMI JOIN (Hive/Impala)
-LEFT SEMI JOIN dwd.dwd_overdue_detail od
-    ON src.loan_id = od.loan_id AND od.overdue_days > 0
-```
-
-### Grouping Sets / CUBE / ROLLUP
-
-#### 多维度组合汇总
-
-```sql
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_multi_dim PARTITION (dt)
-SELECT
-    COALESCE(product_code, '全部')       AS product_code,
-    COALESCE(channel_code, '全部')       AS channel_code,
-    SUM(loan_amount)                     AS td_sum_loan_amt,
-    COUNT(loan_id)                       AS td_cnt_loan,
-    GROUPING__ID                         AS grouping_id,          -- Hive 专用
-    '${dt}'                              AS dt
-FROM dwd.dwd_loan_detail
-WHERE dt = '${dt}'
-GROUP BY product_code, channel_code
-GROUPING SETS (
-    (product_code, channel_code),   -- 产品+渠道
-    (product_code),                 -- 仅产品
-    (channel_code),                 -- 仅渠道
-    ()                              -- 全局汇总
-);
-```
-
-**引擎差异注意：**
-- Hive: 使用 `GROUPING__ID`（双下划线）
-- Impala: 使用 `GROUPING_ID()`（函数调用）
-- Doris: 使用 `GROUPING_ID()` 或 `GROUPING(col)`
+详见 [references/sql-patterns.md](references/sql-patterns.md) 获取完整 SQL 示例。
 
 ---
 
 ## 引擎适配
 
-生成 SQL 前确认目标引擎，适配语法差异：
+生成 SQL 前确认目标引擎，关键差异速查：
 
-| 特性 | Hive | Impala | Doris |
-|------|------|--------|-------|
-| 覆写语法 | `INSERT OVERWRITE TABLE ... PARTITION` | `INSERT OVERWRITE ... PARTITION` | `INSERT INTO`（Unique Model 自动 Upsert） |
-| 日期参数 | `${hivevar:dt}` | `${var:dt}` | 通过应用层传参或硬编码 |
-| GROUPING ID | `GROUPING__ID` | `GROUPING_ID()` | `GROUPING_ID()` |
-| NVL | `NVL()` 或 `COALESCE()` | `IFNULL()` 或 `COALESCE()` | `IFNULL()` 或 `COALESCE()` |
-| 字符串拼接 | `CONCAT()` | `CONCAT()` 或 `\|\|` | `CONCAT()` |
+| 差异项 | Hive | Impala | Doris |
+|--------|------|--------|-------|
+| 日期参数 | `${hivevar:dt}` | `${var:dt}` | 应用层传参 |
+| 覆写语法 | `INSERT OVERWRITE TABLE ... PARTITION` | 同 Hive | `INSERT INTO`（Unique Model Upsert） |
 | 日期加减 | `DATE_ADD(dt, N)` | `DAYS_ADD(dt, N)` | `DATE_ADD(dt, INTERVAL N DAY)` |
-| 日期差 | `DATEDIFF(d1, d2)` | `DATEDIFF(d1, d2)` | `DATEDIFF(d1, d2)` |
-| 类型转换 | `CAST(x AS TYPE)` | `CAST(x AS TYPE)` | `CAST(x AS TYPE)` |
-| CTE | 支持 | 支持 | 支持 |
-| Window Functions | 完整支持 | 完整支持 | 完整支持 |
 
-详见 [references/engine-syntax.md](references/engine-syntax.md)。
+详见 [references/engine-syntax.md](references/engine-syntax.md) 获取完整兼容性矩阵。
 
 ---
 
@@ -837,186 +758,11 @@ impala-shell -f etl_script.sql --var=dt=2026-01-27
 
 ## 完整示例
 
-**需求：** 按日+产品维度统计放款金额、放款笔数、日环比放款金额
+详见 [references/etl-examples.md](references/etl-examples.md)，包含：
 
-**源表：** `dwd.dwd_loan_detail` (loan_id, product_code, loan_amount, loan_date, dt)
-
-**目标表：** `dm.dmm_sac_loan_prod_daily` (product_code, product_name, td_sum_loan_amt, td_cnt_loan, td_diff_loan_amt, dt)
-
-**生成脚本：**
-
-```sql
--- ============================================================
--- 脚本:    dm/dmm_sac_loan_prod_daily_etl.sql
--- 功能:    加工贷款产品日维度指标宽表
--- 目标表:  dm.dmm_sac_loan_prod_daily
--- 源表:    dwd.dwd_loan_detail, dim.dim_product
--- 粒度:    一行 = 一天 × 一产品
--- 调度:    每日 T+1
--- 依赖:    dwd.dwd_loan_detail (dt=${dt}), dim.dim_product
--- 作者:    auto-generated
--- 创建日期: 2026-01-27
--- 修改记录:
---   2026-01-27 auto-generated 初始创建
--- ============================================================
-
--- === Hive 执行参数 ===
-SET hive.exec.dynamic.partition=true;
-SET hive.exec.dynamic.partition.mode=nonstrict;
-SET hive.exec.parallel=true;
-
--- === ETL 主逻辑 ===
-WITH
--- CTE 1: 当日放款聚合
-agg AS (
-    SELECT
-        src.product_code,
-        SUM(src.loan_amount)             AS td_sum_loan_amt,
-        COUNT(src.loan_id)               AS td_cnt_loan
-    FROM dwd.dwd_loan_detail src
-    WHERE src.dt = '${hivevar:dt}'
-    GROUP BY src.product_code
-),
--- CTE 2: 昨日放款金额（用于环比计算）
-agg_prev AS (
-    SELECT
-        src.product_code,
-        SUM(src.loan_amount)             AS yd_sum_loan_amt
-    FROM dwd.dwd_loan_detail src
-    WHERE src.dt = DATE_ADD('${hivevar:dt}', -1)
-    GROUP BY src.product_code
-)
-
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily
-PARTITION (dt)
-SELECT
-    -- ===== 维度字段 =====
-    a.product_code,                                              -- 产品编码
-    dim_prod.product_name,                                       -- 产品名称
-
-    -- ===== 指标字段 =====
-    COALESCE(a.td_sum_loan_amt, 0)       AS td_sum_loan_amt,    -- 当日放款总金额
-    COALESCE(a.td_cnt_loan, 0)           AS td_cnt_loan,        -- 当日放款笔数
-    COALESCE(a.td_sum_loan_amt, 0)
-        - COALESCE(ap.yd_sum_loan_amt, 0)
-                                         AS td_diff_loan_amt,   -- 日环比差值
-
-    -- ===== 分区字段 =====
-    '${hivevar:dt}'                      AS dt
-
-FROM agg a
--- 关联维度: 产品名称
-LEFT JOIN dim.dim_product dim_prod
-    ON a.product_code = dim_prod.product_code
--- 关联: 昨日数据（环比）
-LEFT JOIN agg_prev ap
-    ON a.product_code = ap.product_code
-;
-```
-
-### 初始化脚本示例
-
-当使用 `--mode=init` 时，还会生成以下初始化脚本：
-
-**生成脚本：** `dm/dmm_sac_loan_prod_daily_init.sql`
-
-```sql
--- ============================================================
--- 脚本:    dm/dmm_sac_loan_prod_daily_init.sql
--- 功能:    贷款产品日维度指标宽表 - 历史数据初始化
--- 目标表:  dm.dmm_sac_loan_prod_daily
--- 源表:    dwd.dwd_loan_detail, dim.dim_product
--- 粒度:    一行 = 一天 × 一产品
--- 作者:    auto-generated
--- 创建日期: 2026-01-31
--- ============================================================
---
--- 使用场景: 新表上线时一次性回刷历史数据
---
--- 执行方式:
---   方式 1 (指定日期范围):
---     hive -hivevar start_dt=2024-01-01 -hivevar end_dt=2024-12-31 \
---          -f dmm_sac_loan_prod_daily_init.sql
---
---   方式 2 (使用 Shell 计算最近 N 天):
---     start_dt=$(date -d "30 days ago" +%Y-%m-%d)
---     end_dt=$(date -d "yesterday" +%Y-%m-%d)
---     hive -hivevar start_dt=$start_dt -hivevar end_dt=$end_dt \
---          -f dmm_sac_loan_prod_daily_init.sql
---
--- 注意事项:
---   1. 仅在新表上线或需要全量修复时执行
---   2. 大数据量时建议分批执行（如按月回刷）
---   3. 执行前确认目标表分区可覆盖
---   4. 日常增量调度使用 dmm_sac_loan_prod_daily_etl.sql
---
--- ============================================================
-
--- === 动态分区配置（初始化脚本必需）===
-SET hive.exec.dynamic.partition=true;
-SET hive.exec.dynamic.partition.mode=nonstrict;
-SET hive.exec.max.dynamic.partitions=10000;
-SET hive.exec.max.dynamic.partitions.pernode=1000;
-SET hive.exec.parallel=true;
-
--- === ETL 主逻辑 ===
-WITH
--- CTE 1: 时间范围内放款聚合（按日期分组）
-agg AS (
-    SELECT
-        src.dt,                                  -- 新增：分区字段
-        src.product_code,
-        SUM(src.loan_amount)             AS td_sum_loan_amt,
-        COUNT(src.loan_id)               AS td_cnt_loan
-    FROM dwd.dwd_loan_detail src
-    WHERE src.dt BETWEEN '${hivevar:start_dt}' AND '${hivevar:end_dt}'  -- 时间范围过滤
-    GROUP BY src.dt, src.product_code          -- 新增：dt 分组
-),
--- CTE 2: 计算每天的昨日数据（用于环比）
-agg_with_prev AS (
-    SELECT
-        dt,
-        product_code,
-        td_sum_loan_amt,
-        td_cnt_loan,
-        LAG(td_sum_loan_amt, 1) OVER (PARTITION BY product_code ORDER BY dt) AS yd_sum_loan_amt
-    FROM agg
-)
-
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily
-PARTITION (dt)  -- 动态分区
-SELECT
-    -- ===== 维度字段 =====
-    a.product_code,                                              -- 产品编码
-    dim_prod.product_name,                                       -- 产品名称
-
-    -- ===== 指标字段 =====
-    COALESCE(a.td_sum_loan_amt, 0)       AS td_sum_loan_amt,    -- 当日放款总金额
-    COALESCE(a.td_cnt_loan, 0)           AS td_cnt_loan,        -- 当日放款笔数
-    COALESCE(a.td_sum_loan_amt, 0)
-        - COALESCE(a.yd_sum_loan_amt, 0)
-                                         AS td_diff_loan_amt,   -- 日环比差值
-
-    -- ===== 分区字段 =====
-    a.dt                                 AS dt                   -- 动态分区字段
-
-FROM agg_with_prev a
--- 关联维度: 产品名称
-LEFT JOIN dim.dim_product dim_prod
-    ON a.product_code = dim_prod.product_code
-;
-```
-
-**关键差异对比**:
-
-| 元素 | 增量脚本 | 初始化脚本 |
-|------|---------|-----------|
-| **分区写入** | `PARTITION (dt)` 静态 | `PARTITION (dt)` 动态 |
-| **时间过滤** | `WHERE dt = '${dt}'` | `WHERE dt BETWEEN '${start_dt}' AND '${end_dt}'` |
-| **GROUP BY** | `GROUP BY product_code` | `GROUP BY dt, product_code` |
-| **环比计算** | LEFT JOIN 昨日聚合 | 使用 LAG 窗口函数（性能更优） |
-| **SELECT 分区** | `'${hivevar:dt}' AS dt` 静态 | `a.dt AS dt` 动态来源 |
-| **动态分区配置** | 不需要 | 必须开启 |
+- **增量脚本**: 按日+产品维度统计放款金额、放款笔数、日环比（Hive INSERT OVERWRITE + CTE）
+- **初始化脚本**: 历史回刷版本（动态分区 + LAG 窗口函数替代昨日 JOIN）
+- **增量 vs 初始化关键差异对比表**
 
 ---
 

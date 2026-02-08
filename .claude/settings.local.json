@@ -13,7 +13,9 @@
       "Bash(cmd /c \"dir E:\\\\claude_demo\\\\.claude\\\\skills /b 2>nul || echo empty\")",
       "Bash(dir:*)",
       "Bash(mysql:*)",
-      "Bash(psql:*)"
+      "Bash(psql:*)",
+      "Bash(wc:*)",
+      "Bash(python3:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

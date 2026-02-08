@@ -2,7 +2,7 @@
   "mcpServers": {
     "hive-metadata": {
       "command": "python",
-      "args": ["E:/claude_demo/.claude/skills/search-hive-metadata/scripts/mcp_server.py"],
+      "args": ["/Users/zhouruoyu/IdeaProjects/claude_dw_demo/.claude/skills/search-hive-metadata/scripts/mcp_server.py"],
       "env": {
         "PYTHONIOENCODING": "utf-8",
         "MYSQL_HOST": "127.0.0.1",
@@ -19,3 +19,4 @@
     }
   }
 }
+

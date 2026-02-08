@@ -306,6 +306,41 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 ---
 
+## 项目记忆 (Project Memory)
+
+工作流与 MEMORY.md（auto memory）联动，实现跨会话持续积累。
+
+### 读取时机
+
+| 阶段 | 读取内容 | 用途 |
+|------|---------|------|
+| Phase 2 开始前 | MEMORY.md 表清单 | 补充 MCP 搜索结果，识别近期新建但元数据未同步的表 |
+| Phase 2 开始前 | pitfalls.md 源表特性 | 了解源表已知问题（NULL、负值、分区特殊性） |
+| Phase 3 开始前 | MEMORY.md 决策日志 | 参考历史决策保持一致性 |
+| Phase 4 开始前 | pitfalls.md ETL 错误 | 注入到 Step 2.5 自检清单 |
+| 全流程 | MEMORY.md 用户偏好 | 沿用用户已确认的偏好，减少重复提问 |
+
+### 写入时机
+
+每个 Phase 完成后，**自动更新 MEMORY.md**：
+
+| 阶段完成 | 写入内容 | 目标位置 |
+|---------|---------|---------|
+| Phase 1 | 无 | — |
+| Phase 2（决定复用） | 记录复用决策 | 决策日志 |
+| Phase 3（DDL 生成） | 表名、粒度、操作类型（新建/扩列） | 表清单 + 决策日志 |
+| Phase 4（ETL 生成） | 新注册的指标 | 决策日志 |
+| Phase 5 | 无 | — |
+| 用户指出 ETL 问题时 | 问题描述、原因、修正方式 | pitfalls.md |
+| 首次运行时 | 采集用户偏好（存储格式、确认模式等） | 用户偏好 |
+
+### 记忆文件位置
+
+- `MEMORY.md` — auto memory 主文件（表清单、决策日志、用户偏好）
+- `pitfalls.md` — 踩坑记录（源表特性、ETL 错误、DQC 真实缺陷）
+
+---
+
 ## 上下文传递
 
 各阶段之间的数据传递：
@@ -318,6 +353,9 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 | Phase 4 → Phase 5 | ETL SQL（含源表、加工逻辑）、目标表 DDL |
 | Phase 4 → 指标库 | 新指标注册请求 |
 | Phase 4 → 血缘库 | 表级/字段级血缘关系（自动注册） |
+| Phase 3 → MEMORY.md | 表清单更新（新建/扩列） |
+| Phase 4 → MEMORY.md | 决策日志更新（指标入库） |
+| 用户反馈 → pitfalls.md | 踩坑记录（源表特性、ETL 错误） |
 
 ---
 
