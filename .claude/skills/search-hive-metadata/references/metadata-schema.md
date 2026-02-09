@@ -307,13 +307,25 @@ CREATE TABLE IF NOT EXISTS indicator_registry (
 
 ## 指标库字段说明
 
-| 字段名 | 类型 | 说明 | 示例 |
-|-------|------|-----|------|
-| indicator_name | varchar(50) | 业务指标名称 | `复购率`, `GMV`, `日销售额` |
-| target_column | varchar(50) | 物理字段名 | `repurchase_rate`, `gmv` |
-| source_table | varchar(100) | 指标所在表 | `ads.ads_user_retention_1d` |
-| logic_desc | varchar(200) | 口径描述（关键） | `统计周期内发生2次及以上支付行为的用户占比` |
-| remarks | varchar(100) | 补充备注 | `不含退款订单` |
+| 字段名 | 类型 | 约束 | 说明 | 示例 |
+|-------|------|------|-----|------|
+| indicator_code | varchar(50) | 必填，唯一 | 指标编码 | `IDX_LOAN_001` |
+| indicator_name | varchar(50) | 必填，唯一 | 业务指标名称 | `当日放款金额` |
+| indicator_english_name | varchar(50) | 必填 | 英文名/物理字段名 | `td_loan_amt` |
+| indicator_alias | varchar(50) | 可选 | 指标别名 | `放款额` |
+| indicator_category | varchar(20) | 必填 | 指标分类 | `原子指标`/`派生指标`/`复合指标` |
+| business_domain | varchar(20) | 必填 | 业务域 | `贷款`/`风控`/`营销` |
+| statistical_caliber | varchar(200) | 可选 | 业务口径描述 | `当日实际放款成功的金额合计` |
+| calculation_logic | text | 可选（推荐填写） | 取值逻辑，推荐格式: `SELECT 字段 FROM 表 WHERE 条件` | `SELECT SUM(loan_amt) FROM dwd.dwd_loan_dtl WHERE status='SUCCESS'` |
+| data_source | varchar(100) | 可选 | 数据来源表 | `dm.dmm_sac_loan_prod_daily` |
+| data_type | varchar(20) | 必填，枚举 | 从元数据获取的物理字段类型。可选值: `TINYINT`, `SMALLINT`, `INT`, `BIGINT`, `FLOAT`, `DOUBLE`, `DECIMAL`, `STRING`, `VARCHAR`, `CHAR`, `DATE`, `TIMESTAMP`, `BOOLEAN`, `ARRAY`, `MAP`, `STRUCT` | `DECIMAL` |
+| standard_type | varchar(10) | 必填，枚举 | 标准类型（逻辑分类）。可选值: `数值类`, `日期类`, `文本类`, `枚举类`, `时间类` | `数值类` |
+| update_frequency | varchar(10) | 必填，枚举 | 更新频率。可选值: `实时`, `每小时`, `每日`, `每周`, `每月`, `每季`, `每年`, `手动` | `每日` |
+| status | varchar(10) | 必填，枚举 | 状态。可选值: `启用`, `未启用`, `废弃`，默认 `启用` | `启用` |
+| it_owner | varchar(50) | 可选 | IT 负责人 | `zhangsan` |
+| business_owner | varchar(50) | 可选 | 业务负责人 | `lisi` |
+| create_time | datetime | 自动 | 创建时间 | |
+| update_time | datetime | 自动 | 更新时间 | |
 
 ## 指标库示例数据
 

@@ -807,16 +807,30 @@ ETL 中发现以下新指标尚未入库：
 
 ### 5.3 执行入库
 
-用户确认后，调用 `register_indicator` 批量写入：
+用户确认后，调用 `register_indicator` 批量写入。每个指标须包含完整的必填字段（含枚举约束）：
+
+- `data_type`: 从元数据获取物理字段类型（如 `DECIMAL`/`BIGINT`/`VARCHAR` 等）
+- `standard_type`: 枚举 `数值类`/`日期类`/`文本类`/`枚举类`/`时间类`
+- `update_frequency`: 枚举 `实时`/`每小时`/`每日`/`每周`/`每月`/`每季`/`每年`/`手动`
+- `status`: 枚举 `启用`/`未启用`/`废弃`，默认 `启用`
+- `calculation_logic`（推荐填写）: 格式 `SELECT 字段 FROM 表 WHERE 条件`
 
 ```
 调用: register_indicator({
     "indicators": [
         {
+            "indicator_code": "IDX_LOAN_001",
             "indicator_name": "当日放款金额",
-            "target_column": "td_sum_loan_amt",
-            "source_table": "dm.dmm_sac_loan_prod_daily",
-            "logic_desc": "当日所有放款订单金额之和，单位：元"
+            "indicator_english_name": "td_sum_loan_amt",
+            "indicator_category": "原子指标",
+            "business_domain": "贷款",
+            "data_type": "DECIMAL",
+            "standard_type": "数值类",
+            "update_frequency": "每日",
+            "status": "启用",
+            "statistical_caliber": "当日所有放款订单金额之和，单位：元",
+            "calculation_logic": "SELECT SUM(loan_amt) FROM dwd.dwd_loan_dtl WHERE loan_date = '${dt}' AND status = 'SUCCESS'",
+            "data_source": "dm.dmm_sac_loan_prod_daily"
         },
         ...
     ],

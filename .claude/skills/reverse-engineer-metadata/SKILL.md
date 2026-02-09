@@ -21,9 +21,9 @@
    - 比率指标：除法运算、ROUND 包装
 
 3. **智能推断**
-   - 根据字段名和计算逻辑推断指标类别（金额/数量/比率）
-   - 根据 SQL 位置推断更新频率（分区字段 = dt 则为日更新）
-   - 根据表前缀推断业务域（dm_loan → 贷款域）
+   - 根据字段名和计算逻辑推断 `standard_type`（数值类/日期类/文本类/枚举类/时间类）
+   - 根据 SQL 位置推断 `update_frequency`（分区字段 = dt 则为 `每日`）
+   - 根据表前缀推断 `business_domain`（dm_loan → 贷款域）
 
 4. **交互确认**
    - 展示解析结果（表级血缘 + 字段级映射 + 指标清单）
@@ -131,9 +131,9 @@
 
 | 指标英文名        | 指标中文名      | 计算逻辑                       | 标准类型  | 分类     |
 |------------------|----------------|-------------------------------|---------|---------|
-| td_loan_amt      | 当日放款金额    | SUM(loan_amount)              | 金额     | 原子指标 |
-| td_loan_cnt      | 当日放款笔数    | COUNT(DISTINCT loan_id)       | 数量     | 原子指标 |
-| avg_loan_amt     | 平均单笔金额    | td_loan_amt / td_loan_cnt     | 金额     | 派生指标 |
+| td_loan_amt      | 当日放款金额    | SUM(loan_amount)              | 数值类   | 原子指标 |
+| td_loan_cnt      | 当日放款笔数    | COUNT(DISTINCT loan_id)       | 数值类   | 原子指标 |
+| avg_loan_amt     | 平均单笔金额    | td_loan_amt / td_loan_cnt     | 数值类   | 派生指标 |
 
 ---
 
@@ -185,13 +185,16 @@ def parse_insert_overwrite_sql(sql_content):
 
 ### 指标识别规则
 
-| 模式                          | 识别为                     |
-|-------------------------------|---------------------------|
-| `SUM(xxx_amt)`               | 金额类聚合指标             |
-| `COUNT(DISTINCT xxx_id)`     | 去重计数指标               |
-| `SUM(CASE WHEN ... 1 ELSE 0)`| 条件计数指标               |
-| `A / NULLIF(B, 0)`           | 比率类派生指标             |
-| `ROW_NUMBER() OVER (...)`    | 排名类指标（不入库）       |
+| 模式                          | 识别为          | standard_type |
+|-------------------------------|----------------|---------------|
+| `SUM(xxx_amt)`               | 聚合指标        | 数值类         |
+| `COUNT(DISTINCT xxx_id)`     | 去重计数指标     | 数值类         |
+| `SUM(CASE WHEN ... 1 ELSE 0)`| 条件计数指标     | 数值类         |
+| `A / NULLIF(B, 0)`           | 比率类派生指标   | 数值类         |
+| `ROW_NUMBER() OVER (...)`    | 排名类指标（不入库）| -           |
+| `DATE/TIMESTAMP 字段`         | 日期指标        | 日期类/时间类   |
+| `CASE WHEN → 有限枚举值`      | 枚举指标        | 枚举类         |
+| `VARCHAR/STRING 文本输出`      | 文本指标        | 文本类         |
 
 ### MCP 工具映射
 

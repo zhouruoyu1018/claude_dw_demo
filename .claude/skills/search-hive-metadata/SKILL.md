@@ -136,17 +136,29 @@ MCP Server 提供以下工具：
 
 **参数:**
 - `indicators` (array, required): 待注册的指标列表，每条包含：
-  - `indicator_name` (string, required): 业务指标名称，如"当日放款金额"
-  - `target_column` (string, required): 物理字段名，如"td_sum_loan_amt"
-  - `source_table` (string, required): 所在表完整名，如"dm.dmm_sac_loan_prod_daily"
-  - `logic_desc` (string, required): 计算口径描述
-  - `remarks` (string, optional): 备注
-- `created_by` (string, optional): 创建人标识，默认"auto"
+  - **必填字段:**
+  - `indicator_code` (string): 指标编码，如 `IDX_LOAN_001`
+  - `indicator_name` (string): 业务指标名称，如 `当日放款金额`
+  - `indicator_english_name` (string): 英文名/物理字段名，如 `td_loan_amt`
+  - `indicator_category` (string): 指标分类: `原子指标`/`派生指标`/`复合指标`
+  - `business_domain` (string): 业务域，如 `贷款`/`风控`/`营销`
+  - `data_type` (string, **枚举**): 从元数据获取的物理字段类型。可选值: `TINYINT`/`SMALLINT`/`INT`/`BIGINT`/`FLOAT`/`DOUBLE`/`DECIMAL`/`STRING`/`VARCHAR`/`CHAR`/`DATE`/`TIMESTAMP`/`BOOLEAN`/`ARRAY`/`MAP`/`STRUCT`
+  - `standard_type` (string, **枚举**): 标准类型。可选值: `数值类`/`日期类`/`文本类`/`枚举类`/`时间类`
+  - `update_frequency` (string, **枚举**): 更新频率。可选值: `实时`/`每小时`/`每日`/`每周`/`每月`/`每季`/`每年`/`手动`
+  - `status` (string, **枚举**): 状态。可选值: `启用`/`未启用`/`废弃`，默认 `启用`
+  - **可选字段:**
+  - `indicator_alias` (string): 指标别名
+  - `statistical_caliber` (string): 业务口径描述
+  - `calculation_logic` (string): 取值逻辑，推荐格式: `SELECT 字段 FROM 表 WHERE 条件`；也可为计算公式
+  - `data_source` (string): 数据来源表
+  - `value_domain` (string): 值域说明
+  - `sensitive` (string): 敏感级别
+- `created_by` (string, optional): 创建人标识，默认 `auto`
 
 **返回:**
 - `registered`: 成功注册的指标列表
 - `skipped`: 跳过的指标（同名已存在）
-- `failed`: 失败的指标（缺少必填字段）
+- `failed`: 失败的指标（缺少必填字段或枚举校验失败）
 - `summary`: 汇总（total / registered / skipped / failed）
 
 **示例:**
@@ -154,16 +166,31 @@ MCP Server 提供以下工具：
 register_indicator({
     "indicators": [
         {
+            "indicator_code": "IDX_LOAN_001",
             "indicator_name": "当日放款金额",
-            "target_column": "td_sum_loan_amt",
-            "source_table": "dm.dmm_sac_loan_prod_daily",
-            "logic_desc": "当日所有放款订单金额之和，单位：元"
+            "indicator_english_name": "td_sum_loan_amt",
+            "indicator_category": "原子指标",
+            "business_domain": "贷款",
+            "data_type": "DECIMAL",
+            "standard_type": "数值类",
+            "update_frequency": "每日",
+            "status": "启用",
+            "statistical_caliber": "当日所有放款订单金额之和，单位：元",
+            "calculation_logic": "SELECT SUM(loan_amt) FROM dwd.dwd_loan_dtl WHERE loan_date = '${dt}' AND status = 'SUCCESS'",
+            "data_source": "dm.dmm_sac_loan_prod_daily"
         },
         {
+            "indicator_code": "IDX_LOAN_002",
             "indicator_name": "当日放款笔数",
-            "target_column": "td_cnt_loan",
-            "source_table": "dm.dmm_sac_loan_prod_daily",
-            "logic_desc": "当日放款订单去重计数"
+            "indicator_english_name": "td_cnt_loan",
+            "indicator_category": "原子指标",
+            "business_domain": "贷款",
+            "data_type": "BIGINT",
+            "standard_type": "数值类",
+            "update_frequency": "每日",
+            "status": "启用",
+            "statistical_caliber": "当日放款订单去重计数",
+            "data_source": "dm.dmm_sac_loan_prod_daily"
         }
     ],
     "created_by": "zhangsan"

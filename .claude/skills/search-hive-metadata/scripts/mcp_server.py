@@ -830,6 +830,23 @@ def search_lineage_downstream(table_name: str, depth: int = 1, include_columns: 
         conn.close()
 
 
+# ============== 指标注册枚举约束 ==============
+
+VALID_DATA_TYPES = {
+    "TINYINT", "SMALLINT", "INT", "BIGINT",
+    "FLOAT", "DOUBLE", "DECIMAL",
+    "STRING", "VARCHAR", "CHAR",
+    "DATE", "TIMESTAMP",
+    "BOOLEAN", "ARRAY", "MAP", "STRUCT"
+}
+
+VALID_STANDARD_TYPES = {"数值类", "日期类", "文本类", "枚举类", "时间类"}
+
+VALID_FREQUENCIES = {"实时", "每小时", "每日", "每周", "每月", "每季", "每年", "手动"}
+
+VALID_STATUSES = {"启用", "未启用", "废弃"}
+
+
 def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict:
     """
     将新指标注册到指标库。支持单条和批量注册（写入 PostgreSQL）。
@@ -841,17 +858,17 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
             - indicator_code (str): 指标编码，如 'IDX_LOAN_001'
             - indicator_name (str): 业务指标名称，如 '当日放款金额'
             - indicator_english_name (str): 英文名/物理字段名，如 'td_loan_amt'
-            - indicator_category (str): 指标分类，如 '原子指标'/'派生指标'/'复合指标'
+            - indicator_category (str): 指标分类: '原子指标'/'派生指标'/'复合指标'
             - business_domain (str): 业务域，如 '贷款'/'风控'/'营销'
-            - data_type (str): 数据类型，如 'DECIMAL'/'BIGINT'/'VARCHAR'
-            - standard_type (str): 标准类型，如 '金额'/'数量'/'比率'
-            - update_frequency (str): 更新频率，如 '日'/'小时'/'实时'
-            - status (str): 状态，如 '生效'/'草稿'/'废弃'
+            - data_type (str): 数据类型，须从元数据获取，枚举: TINYINT/SMALLINT/INT/BIGINT/FLOAT/DOUBLE/DECIMAL/STRING/VARCHAR/CHAR/DATE/TIMESTAMP/BOOLEAN/ARRAY/MAP/STRUCT
+            - standard_type (str): 标准类型，枚举: 数值类/日期类/文本类/枚举类/时间类
+            - update_frequency (str): 更新频率，枚举: 实时/每小时/每日/每周/每月/每季/每年/手动
+            - status (str): 状态，枚举: 启用/未启用/废弃
 
             可选字段:
             - indicator_alias (str): 指标别名
             - statistical_caliber (str): 业务口径描述
-            - calculation_logic (str): 取值逻辑/计算公式
+            - calculation_logic (str): 取值逻辑，推荐格式: SELECT 字段 FROM 表 WHERE 条件；也可为计算公式如 '指标A/指标B'
             - data_source (str): 数据来源表
             - value_domain (str): 值域说明
             - sensitive (str): 敏感级别
@@ -885,7 +902,7 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
             data_type = ind.get("data_type", "").strip()
             standard_type = ind.get("standard_type", "").strip()
             frequency = ind.get("update_frequency", "").strip()
-            status = ind.get("status", "生效").strip()
+            status = ind.get("status", "启用").strip()
 
             # 提取可选字段
             alias = ind.get("indicator_alias", "").strip() or None
@@ -905,6 +922,25 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
                 failed.append({
                     "indicator_name": name or "(空)",
                     "reason": f"缺少必填字段: {', '.join(missing)}"
+                })
+                continue
+
+            # 枚举值校验
+            enum_errors = []
+            if data_type.upper() not in VALID_DATA_TYPES:
+                enum_errors.append(f"data_type '{data_type}' 不在允许范围内，可选: {', '.join(sorted(VALID_DATA_TYPES))}")
+            else:
+                data_type = data_type.upper()  # 统一大写
+            if standard_type not in VALID_STANDARD_TYPES:
+                enum_errors.append(f"standard_type '{standard_type}' 不在允许范围内，可选: {', '.join(sorted(VALID_STANDARD_TYPES))}")
+            if frequency not in VALID_FREQUENCIES:
+                enum_errors.append(f"update_frequency '{frequency}' 不在允许范围内，可选: {', '.join(sorted(VALID_FREQUENCIES))}")
+            if status not in VALID_STATUSES:
+                enum_errors.append(f"status '{status}' 不在允许范围内，可选: {', '.join(sorted(VALID_STATUSES))}")
+            if enum_errors:
+                failed.append({
+                    "indicator_name": name or "(空)",
+                    "reason": "枚举值校验失败: " + "; ".join(enum_errors)
                 })
                 continue
 
@@ -1272,7 +1308,7 @@ async def list_tools() -> list[Tool]:
                                 },
                                 "calculation_logic": {
                                     "type": "string",
-                                    "description": "取值逻辑/计算公式（可选）"
+                                    "description": "取值逻辑（可选），推荐格式: SELECT 字段 FROM 表 WHERE 条件；也可为计算公式如 '指标A/指标B'"
                                 },
                                 "data_source": {
                                     "type": "string",
@@ -1280,20 +1316,24 @@ async def list_tools() -> list[Tool]:
                                 },
                                 "data_type": {
                                     "type": "string",
-                                    "description": "数据类型: 'DECIMAL'/'BIGINT'/'VARCHAR' 等"
+                                    "description": "数据类型，须从元数据获取物理字段类型",
+                                    "enum": ["TINYINT", "SMALLINT", "INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "STRING", "VARCHAR", "CHAR", "DATE", "TIMESTAMP", "BOOLEAN", "ARRAY", "MAP", "STRUCT"]
                                 },
                                 "standard_type": {
                                     "type": "string",
-                                    "description": "标准类型，如 '金额'/'数量'/'比率'"
+                                    "description": "标准类型（逻辑分类）",
+                                    "enum": ["数值类", "日期类", "文本类", "枚举类", "时间类"]
                                 },
                                 "update_frequency": {
                                     "type": "string",
-                                    "description": "更新频率: '日'/'小时'/'实时'"
+                                    "description": "更新频率",
+                                    "enum": ["实时", "每小时", "每日", "每周", "每月", "每季", "每年", "手动"]
                                 },
                                 "status": {
                                     "type": "string",
-                                    "description": "状态: '生效'/'草稿'/'废弃'，默认 '生效'",
-                                    "default": "生效"
+                                    "description": "状态，默认 '启用'",
+                                    "enum": ["启用", "未启用", "废弃"],
+                                    "default": "启用"
                                 },
                                 "it_owner": {
                                     "type": "string",
