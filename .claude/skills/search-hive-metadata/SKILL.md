@@ -146,11 +146,11 @@ MCP Server 提供以下工具：
   - `standard_type` (string, **枚举**): 标准类型。可选值: `数值类`/`日期类`/`文本类`/`枚举类`/`时间类`
   - `update_frequency` (string, **枚举**): 更新频率。可选值: `实时`/`每小时`/`每日`/`每周`/`每月`/`每季`/`每年`/`手动`
   - `status` (string, **枚举**): 状态。可选值: `启用`/`未启用`/`废弃`，默认 `启用`
-  - **可选字段:**
-  - `indicator_alias` (string): 指标别名
   - `statistical_caliber` (string): 业务口径描述
   - `calculation_logic` (string): 取值逻辑，推荐格式: `SELECT 字段 FROM 表 WHERE 条件`；也可为计算公式
   - `data_source` (string): 数据来源表
+  - **可选字段:**
+  - `indicator_alias` (string): 指标别名
   - `value_domain` (string): 值域说明
   - `sensitive` (string): 敏感级别
 - `created_by` (string, optional): 创建人标识，默认 `auto`

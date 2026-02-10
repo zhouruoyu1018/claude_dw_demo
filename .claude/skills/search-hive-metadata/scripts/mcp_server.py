@@ -519,7 +519,8 @@ def register_lineage(
     etl_script_path: str = None,
     etl_logic_summary: str = None,
     column_lineage: list[dict] = None,
-    created_by: str = "auto"
+    created_by: str = "auto",
+    full_refresh: bool = False
 ) -> dict:
     """
     注册表级和字段级血缘关系（写入 PostgreSQL）
@@ -539,6 +540,9 @@ def register_lineage(
             - transform_type (str): 转换类型，如 'DIRECT', 'SUM', 'COUNT', 'CASE'
             - transform_expr (str): 转换表达式
         created_by: 创建人标识
+        full_refresh: 全量刷新模式。为 True 时，先将该目标表的旧血缘标记为
+            is_active=FALSE，再写入新血缘。用于 ETL 重构后清理过期依赖。
+            默认 False（增量 upsert 模式）。
 
     Returns:
         注册结果摘要
@@ -552,6 +556,25 @@ def register_lineage(
 
         registered_table_lineage = []
         registered_column_lineage = []
+        deactivated_count = 0
+
+        # 0. full_refresh 模式: 先软删除旧血缘
+        if full_refresh:
+            # 软删除表级血缘
+            cursor.execute(
+                """UPDATE data_lineage SET is_active = FALSE, updated_time = NOW()
+                   WHERE target_table = %s AND is_active = TRUE""",
+                [target_table]
+            )
+            deactivated_count += cursor.rowcount
+
+            # 软删除字段级血缘（通过关联的 table_lineage_id）
+            cursor.execute(
+                """DELETE FROM column_lineage
+                   WHERE target_table = %s""",
+                [target_table]
+            )
+            deactivated_count += cursor.rowcount
 
         # 1. 注册表级血缘
         for src in source_tables:
@@ -671,11 +694,13 @@ def register_lineage(
 
         return {
             "target_table": target_table,
+            "full_refresh": full_refresh,
             "table_lineage": registered_table_lineage,
             "column_lineage": registered_column_lineage,
             "summary": {
                 "table_lineage_count": len(registered_table_lineage),
-                "column_lineage_count": len(registered_column_lineage)
+                "column_lineage_count": len(registered_column_lineage),
+                "deactivated_count": deactivated_count if full_refresh else 0
             }
         }
 
@@ -846,6 +871,117 @@ VALID_FREQUENCIES = {"实时", "每小时", "每日", "每周", "每月", "每�
 
 VALID_STATUSES = {"启用", "未启用", "废弃"}
 
+# data_type 到 standard_type 的自动推导映射
+DATA_TYPE_TO_STANDARD = {
+    "TINYINT": "数值类", "SMALLINT": "数值类", "INT": "数值类", "BIGINT": "数值类",
+    "FLOAT": "数值类", "DOUBLE": "数值类", "DECIMAL": "数值类",
+    "STRING": "文本类", "VARCHAR": "文本类", "CHAR": "文本类",
+    "DATE": "日期类", "TIMESTAMP": "时间类",
+    "BOOLEAN": "枚举类",
+    "ARRAY": "文本类", "MAP": "文本类", "STRUCT": "文本类"
+}
+
+
+def _fetch_table_columns_cached(table_name_full: str) -> list[dict]:
+    """
+    从 MySQL 元数据库获取表的字段列表（供 register_indicator 内部校验使用）。
+    返回 [{"name": "...", "type": "...", "comment": "..."}]
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(DictCursor)
+        cursor.execute(
+            "SELECT column_list FROM tbl_base_info WHERE table_name_full = %s",
+            [table_name_full]
+        )
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not result or not result.get("column_list"):
+            return []
+        return parse_column_list(result["column_list"])
+    except Exception:
+        return []
+
+
+def _enrich_and_validate_indicator(ind: dict, columns_cache: dict) -> dict:
+    """
+    对单条指标做元数据自动补全 + 校验。
+
+    补全逻辑:
+      1. 如果提供了 data_source 但缺失 data_type → 从元数据自动获取
+      2. 如果提供了 data_type 但缺失 standard_type → 自动推导
+      3. 如果提供了 data_source → 校验 indicator_english_name 是否存在于该表
+
+    Args:
+        ind: 原始指标字典
+        columns_cache: {table_name_full: [columns]} 缓存，避免重复查询
+
+    Returns:
+        enriched dict，新增 _warnings 列表和 _enriched_fields 列表
+    """
+    result = dict(ind)
+    warnings = []
+    enriched_fields = []
+
+    source = (ind.get("data_source") or "").strip()
+    english_name = (ind.get("indicator_english_name") or "").strip()
+    data_type = (ind.get("data_type") or "").strip()
+    standard_type = (ind.get("standard_type") or "").strip()
+
+    # Step 1: 如果有 data_source，获取列元数据
+    if source:
+        if source not in columns_cache:
+            columns_cache[source] = _fetch_table_columns_cached(source)
+        columns = columns_cache[source]
+
+        if columns:
+            # 构建 name→column 索引
+            col_map = {c["name"].lower(): c for c in columns if c.get("name")}
+
+            # 校验 indicator_english_name 是否存在于表中
+            if english_name:
+                matched_col = col_map.get(english_name.lower())
+                if matched_col:
+                    # 自动补全 data_type
+                    if not data_type:
+                        raw_type = (matched_col.get("type") or "").upper()
+                        # 处理 DECIMAL(18,2) → DECIMAL 等带参数类型
+                        base_type = raw_type.split("(")[0].strip()
+                        if base_type in VALID_DATA_TYPES:
+                            result["data_type"] = base_type
+                            enriched_fields.append(f"data_type: {base_type} (从 {source} 元数据自动获取)")
+                            data_type = base_type
+                        else:
+                            warnings.append(
+                                f"从元数据获取到 data_type='{raw_type}'，无法映射到标准类型，请手动指定"
+                            )
+                else:
+                    # 字段名不存在于表中，尝试模糊匹配给出建议
+                    suggestions = [
+                        c["name"] for c in columns
+                        if english_name.lower() in (c.get("name") or "").lower()
+                           or (c.get("comment") and english_name in c["comment"])
+                    ][:5]
+                    warn_msg = f"字段 '{english_name}' 不存在于表 {source} 中"
+                    if suggestions:
+                        warn_msg += f"，相近字段: {', '.join(suggestions)}"
+                    warnings.append(warn_msg)
+        else:
+            warnings.append(f"无法获取表 {source} 的元数据，跳过字段校验")
+
+    # Step 2: 如果有 data_type 但没有 standard_type，自动推导
+    if data_type and not standard_type:
+        inferred = DATA_TYPE_TO_STANDARD.get(data_type.upper())
+        if inferred:
+            result["standard_type"] = inferred
+            enriched_fields.append(f"standard_type: {inferred} (从 data_type={data_type} 自动推导)")
+
+    result["_warnings"] = warnings
+    result["_enriched_fields"] = enriched_fields
+    return result
+
 
 def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict:
     """
@@ -886,6 +1022,9 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
         skipped = []
         failed = []
 
+        # 元数据列缓存，避免同一张表重复查询
+        columns_cache = {}
+
         required_fields = [
             "indicator_code", "indicator_name", "indicator_english_name",
             "indicator_category", "business_domain", "data_type",
@@ -893,7 +1032,12 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
         ]
 
         for ind in indicators:
-            # 提取必填字段
+            # ===== 自动补全: 先做元数据对齐，再校验必填字段 =====
+            ind = _enrich_and_validate_indicator(ind, columns_cache)
+            enrich_warnings = ind.pop("_warnings", [])
+            enrich_fields = ind.pop("_enriched_fields", [])
+
+            # 提取必填字段（补全后的值）
             code = ind.get("indicator_code", "").strip()
             name = ind.get("indicator_name", "").strip()
             english_name = ind.get("indicator_english_name", "").strip()
@@ -916,7 +1060,7 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
             it_owner = ind.get("it_owner", created_by).strip()
             business_owner = ind.get("business_owner", created_by).strip()
 
-            # 校验必填字段
+            # 校验必填字段（补全后再检查，补全可能已填充 data_type / standard_type）
             missing = [f for f in required_fields if not ind.get(f, "").strip()]
             if missing:
                 failed.append({
@@ -980,13 +1124,18 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
                  standard_type, value_domain, sensitive, logic, source, frequency,
                  it_owner, business_owner, status]
             )
-            registered.append({
+            reg_entry = {
                 "indicator_code": code,
                 "indicator_name": name,
                 "indicator_english_name": english_name,
                 "data_source": source,
                 "statistical_caliber": caliber
-            })
+            }
+            if enrich_fields:
+                reg_entry["auto_enriched"] = enrich_fields
+            if enrich_warnings:
+                reg_entry["warnings"] = enrich_warnings
+            registered.append(reg_entry)
 
         conn.commit()
 
@@ -1000,6 +1149,144 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
                 "skipped": len(skipped),
                 "failed": len(failed)
             }
+        }
+
+    except Exception as e:
+        conn.rollback()
+        raise e
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def update_indicator(
+    indicator_code: str = None,
+    indicator_name: str = None,
+    updates: dict = None,
+    updated_by: str = "auto"
+) -> dict:
+    """
+    更新已有指标的信息（写入 PostgreSQL）。
+    通过 indicator_code 或 indicator_name 定位指标，然后更新指定字段。
+
+    Args:
+        indicator_code: 指标编码，用于定位指标（与 indicator_name 二选一）
+        indicator_name: 指标名称，用于定位指标（与 indicator_code 二选一）
+        updates: 要更新的字段字典，支持的字段包括:
+            - indicator_name, indicator_alias, indicator_english_name
+            - indicator_category, business_domain
+            - statistical_caliber, calculation_logic
+            - data_source, data_type, standard_type
+            - update_frequency, status
+            - it_owner, business_owner
+        updated_by: 更新人标识
+
+    Returns:
+        更新结果摘要
+    """
+    if not indicator_code and not indicator_name:
+        return {"success": False, "reason": "必须提供 indicator_code 或 indicator_name 之一来定位指标"}
+
+    if not updates:
+        return {"success": False, "reason": "未提供任何需要更新的字段"}
+
+    # 允许更新的字段白名单
+    allowed_fields = {
+        "indicator_name", "indicator_alias", "indicator_english_name",
+        "indicator_category", "business_domain",
+        "statistical_caliber", "calculation_logic",
+        "data_source", "data_type", "standard_type",
+        "update_frequency", "status",
+        "it_owner", "business_owner"
+    }
+
+    # 过滤非法字段
+    invalid_fields = set(updates.keys()) - allowed_fields
+    if invalid_fields:
+        return {"success": False, "reason": f"不允许更新的字段: {', '.join(invalid_fields)}"}
+
+    # 枚举值校验
+    enum_errors = []
+    if "data_type" in updates and updates["data_type"].upper() not in VALID_DATA_TYPES:
+        enum_errors.append(f"data_type '{updates['data_type']}' 不在允许范围内")
+    if "standard_type" in updates and updates["standard_type"] not in VALID_STANDARD_TYPES:
+        enum_errors.append(f"standard_type '{updates['standard_type']}' 不在允许范围内")
+    if "update_frequency" in updates and updates["update_frequency"] not in VALID_FREQUENCIES:
+        enum_errors.append(f"update_frequency '{updates['update_frequency']}' 不在允许范围内")
+    if "status" in updates and updates["status"] not in VALID_STATUSES:
+        enum_errors.append(f"status '{updates['status']}' 不在允许范围内")
+    if enum_errors:
+        return {"success": False, "reason": "枚举值校验失败: " + "; ".join(enum_errors)}
+
+    conn = get_pg_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        # 定位指标
+        if indicator_code:
+            cursor.execute(
+                "SELECT * FROM indicator_registry WHERE indicator_code = %s",
+                [indicator_code]
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM indicator_registry WHERE indicator_name = %s",
+                [indicator_name]
+            )
+
+        existing = cursor.fetchone()
+        if not existing:
+            lookup_key = indicator_code or indicator_name
+            return {"success": False, "reason": f"未找到指标: {lookup_key}"}
+
+        # 记录变更前的值（用于返回 diff）
+        before = {}
+        after = {}
+        for field, new_val in updates.items():
+            old_val = existing.get(field)
+            if old_val is not None:
+                old_val = str(old_val)
+            new_val_str = str(new_val) if new_val is not None else None
+            if old_val != new_val_str:
+                before[field] = old_val
+                after[field] = new_val_str
+
+        if not after:
+            return {
+                "success": True,
+                "indicator_code": existing["indicator_code"],
+                "indicator_name": existing["indicator_name"],
+                "message": "所有字段值与现有记录相同，无需更新"
+            }
+
+        # 构建 UPDATE SQL
+        if "data_type" in updates:
+            updates["data_type"] = updates["data_type"].upper()
+
+        set_clauses = []
+        params = []
+        for field, value in updates.items():
+            set_clauses.append(f"{field} = %s")
+            params.append(value)
+
+        # 追加 update_time
+        set_clauses.append("update_time = NOW()")
+        sql = f"UPDATE indicator_registry SET {', '.join(set_clauses)} WHERE id = %s"
+        params.append(existing["id"])
+
+        cursor.execute(sql, params)
+        conn.commit()
+
+        return {
+            "success": True,
+            "indicator_code": existing["indicator_code"],
+            "indicator_name": existing["indicator_name"],
+            "changes": {
+                "before": before,
+                "after": after
+            },
+            "updated_by": updated_by
         }
 
     except Exception as e:
@@ -1140,7 +1427,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="register_lineage",
-            description="注册表级和字段级血缘关系。在 ETL 开发完成后自动调用，记录目标表与源表的依赖关系，支持后续的影响分析和数据溯源。",
+            description="注册表级和字段级血缘关系。在 ETL 开发完成后自动调用，记录目标表与源表的依赖关系，支持后续的影响分析和数据溯源。已有记录自动更新（upsert）；ETL 重构时可启用 full_refresh 模式清理过期依赖。",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1209,6 +1496,11 @@ async def list_tools() -> list[Tool]:
                             "required": ["target_column", "source_table", "source_column"]
                         }
                     },
+                    "full_refresh": {
+                        "type": "boolean",
+                        "description": "全量刷新模式。为 true 时先软删除该目标表的全部旧血缘，再写入新血缘，用于 ETL 重构后清理过期依赖。默认 false（增量 upsert）",
+                        "default": False
+                    },
                     "created_by": {
                         "type": "string",
                         "description": "创建人标识，默认 'auto'",
@@ -1268,7 +1560,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="register_indicator",
-            description="将新指标注册到指标库。ETL 开发完成后，对新产生的公共指标执行入库，闭环'复用优先'流程。注册前会自动检查重复（按指标名称或编码）。",
+            description="将新指标注册到指标库。ETL 开发完成后，对新产生的公共指标执行入库，闭环'复用优先'流程。注册前会自动检查重复（按指标名称或编码）。如指标已存在需更新，请使用 update_indicator。",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1358,6 +1650,49 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["indicators"]
+            }
+        ),
+        Tool(
+            name="update_indicator",
+            description="更新已有指标的信息。当数据表逻辑变更导致指标口径、数据来源或计算逻辑发生变化时，使用此工具更新指标库，保持指标元数据与实际 ETL 逻辑同步。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "indicator_code": {
+                        "type": "string",
+                        "description": "指标编码，用于定位指标（与 indicator_name 二选一）"
+                    },
+                    "indicator_name": {
+                        "type": "string",
+                        "description": "指标名称，用于定位指标（与 indicator_code 二选一）"
+                    },
+                    "updates": {
+                        "type": "object",
+                        "description": "要更新的字段。支持: indicator_name, indicator_alias, indicator_english_name, indicator_category, business_domain, statistical_caliber, calculation_logic, data_source, data_type, standard_type, update_frequency, status, it_owner, business_owner",
+                        "properties": {
+                            "indicator_name": {"type": "string", "description": "新的指标名称"},
+                            "indicator_alias": {"type": "string", "description": "新的指标别名"},
+                            "indicator_english_name": {"type": "string", "description": "新的英文名/物理字段名"},
+                            "indicator_category": {"type": "string", "description": "指标分类: '原子指标'/'派生指标'/'复合指标'"},
+                            "business_domain": {"type": "string", "description": "业务域"},
+                            "statistical_caliber": {"type": "string", "description": "业务口径描述"},
+                            "calculation_logic": {"type": "string", "description": "取值逻辑"},
+                            "data_source": {"type": "string", "description": "数据来源表"},
+                            "data_type": {"type": "string", "description": "数据类型", "enum": ["TINYINT", "SMALLINT", "INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "STRING", "VARCHAR", "CHAR", "DATE", "TIMESTAMP", "BOOLEAN", "ARRAY", "MAP", "STRUCT"]},
+                            "standard_type": {"type": "string", "description": "标准类型", "enum": ["数值类", "日期类", "文本类", "枚举类", "时间类"]},
+                            "update_frequency": {"type": "string", "description": "更新频率", "enum": ["实时", "每小时", "每日", "每周", "每月", "每季", "每年", "手动"]},
+                            "status": {"type": "string", "description": "状态", "enum": ["启用", "未启用", "废弃"]},
+                            "it_owner": {"type": "string", "description": "IT负责人"},
+                            "business_owner": {"type": "string", "description": "业务负责人"}
+                        }
+                    },
+                    "updated_by": {
+                        "type": "string",
+                        "description": "更新人标识，默认 'auto'",
+                        "default": "auto"
+                    }
+                },
+                "required": ["updates"]
             }
         )
     ]
@@ -1578,12 +1913,17 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 etl_script_path=arguments.get("etl_script_path"),
                 etl_logic_summary=arguments.get("etl_logic_summary"),
                 column_lineage=arguments.get("column_lineage"),
-                created_by=arguments.get("created_by", "auto")
+                created_by=arguments.get("created_by", "auto"),
+                full_refresh=arguments.get("full_refresh", False)
             )
 
             summary = result["summary"]
-            output = f"## 血缘注册结果\n\n"
+            mode_label = "全量刷新" if result.get("full_refresh") else "增量更新"
+            output = f"## 血缘注册结果（{mode_label}）\n\n"
             output += f"**目标表**: `{result['target_table']}`\n\n"
+
+            if summary.get("deactivated_count", 0) > 0:
+                output += f"**已清理旧血缘**: {summary['deactivated_count']} 条\n\n"
 
             if result["table_lineage"]:
                 output += "### 表级血缘\n\n"
@@ -1722,6 +2062,24 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     output += f"| `{r['indicator_code']}` | {r['indicator_name']} | `{r['indicator_english_name']}` | `{r.get('data_source') or '-'}` | {r.get('statistical_caliber') or '-'} |\n"
                 output += "\n"
 
+                # 显示自动补全信息
+                enriched_items = [r for r in result["registered"] if r.get("auto_enriched")]
+                if enriched_items:
+                    output += "### 自动补全\n\n"
+                    for r in enriched_items:
+                        output += f"- **{r['indicator_name']}**: "
+                        output += "; ".join(r["auto_enriched"]) + "\n"
+                    output += "\n"
+
+                # 显示校验警告
+                warned_items = [r for r in result["registered"] if r.get("warnings")]
+                if warned_items:
+                    output += "### 校验警告\n\n"
+                    for r in warned_items:
+                        for w in r["warnings"]:
+                            output += f"- **{r['indicator_name']}**: {w}\n"
+                    output += "\n"
+
             if result["skipped"]:
                 output += "### 已跳过（同名或同编码指标已存在）\n\n"
                 output += "| 指标编码 | 指标名称 | 已有编码 | 已有来源 | 已有口径 |\n"
@@ -1729,13 +2087,46 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 for s in result["skipped"]:
                     output += f"| `{s.get('indicator_code', '-')}` | {s['indicator_name']} | `{s.get('existing_code', '-')}` | `{s.get('existing_source') or '-'}` | {s.get('existing_caliber') or '-'} |\n"
                 output += "\n"
-                output += "**如需更新已有指标，请联系指标管理员手动修改。**\n\n"
+                output += "**如需更新已有指标，请使用 `update_indicator` 工具。**\n\n"
 
             if result["failed"]:
                 output += "### 失败\n\n"
                 for f in result["failed"]:
                     output += f"- **{f['indicator_name']}**: {f['reason']}\n"
                 output += "\n"
+
+            return [TextContent(type="text", text=output)]
+
+        elif name == "update_indicator":
+            result = update_indicator(
+                indicator_code=arguments.get("indicator_code"),
+                indicator_name=arguments.get("indicator_name"),
+                updates=arguments.get("updates", {}),
+                updated_by=arguments.get("updated_by", "auto")
+            )
+
+            if not result.get("success"):
+                return [TextContent(
+                    type="text",
+                    text=f"## 指标更新失败\n\n**原因**: {result.get('reason', '未知错误')}"
+                )]
+
+            output = f"## 指标更新成功\n\n"
+            output += f"- **指标编码**: `{result['indicator_code']}`\n"
+            output += f"- **指标名称**: {result['indicator_name']}\n"
+
+            if result.get("message"):
+                output += f"\n{result['message']}\n"
+            elif result.get("changes"):
+                changes = result["changes"]
+                output += f"\n### 变更明细\n\n"
+                output += "| 字段 | 变更前 | 变更后 |\n"
+                output += "|------|-------|-------|\n"
+                for field in changes.get("before", {}):
+                    before_val = changes["before"][field] or "(空)"
+                    after_val = changes["after"][field] or "(空)"
+                    output += f"| `{field}` | {before_val} | {after_val} |\n"
+                output += f"\n**更新人**: {result.get('updated_by', '-')}\n"
 
             return [TextContent(type="text", text=output)]
 
