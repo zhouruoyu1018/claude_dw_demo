@@ -38,7 +38,7 @@ config/            # Connection configs and environment settings
 hive -f sql/hive/etl/script.sql
 
 # Execute with variables
-hive -f script.sql -hivevar dt=2024-01-01
+hive -f script.sql -hivevar stat_date=2024-01-01
 
 # Beeline connection
 beeline -u "jdbc:hive2://host:10000/default" -f script.sql
@@ -50,7 +50,7 @@ beeline -u "jdbc:hive2://host:10000/default" -f script.sql
 impala-shell -f sql/impala/etl/script.sql
 
 # With database and variables
-impala-shell -i host:21000 -d database_name -f script.sql --var=dt=2024-01-01
+impala-shell -i host:21000 -d database_name -f script.sql --var=stat_date=2024-01-01
 
 # Refresh metadata after Hive changes
 impala-shell -q "INVALIDATE METADATA table_name"
@@ -89,7 +89,9 @@ ods (原始层)      ← 原始数据接入
 
 - **Naming**: Use snake_case for tables and columns (e.g., `dm_loan_daily`, `da_overdue_report`)
 - **Layer prefixes**: `ods_` (raw), `dwd_` (detail), `dwm_` (middle), `dws_` (summary), `dm_` (mart), `da_` (application)
-- **Partitions**: Use `dt` for date partitions in format `YYYY-MM-DD`
+- **Partitions**:
+  - Hive/Impala: 日分区 `stat_date` (格式 `YYYY-MM-DD`), 月分区 `stat_month` (格式 `YYYY-MM`)
+  - Doris: 统一使用 `partition_key`
 - **File headers**: Include author, create date, description, and changelog
 
 ## Engine-Specific Notes

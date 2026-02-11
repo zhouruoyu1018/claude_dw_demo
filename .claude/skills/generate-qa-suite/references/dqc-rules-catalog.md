@@ -31,7 +31,7 @@ T  = Timeliness    (时效性)
 
 ```sql
 SELECT COUNT(*) AS cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 -- FATAL if cnt = 0
 ```
 
@@ -47,7 +47,7 @@ FROM {table} WHERE dt = '${dt}';
 SELECT SUM(CASE WHEN {col} IS NULL THEN 1 ELSE 0 END) AS null_cnt,
        COUNT(*) AS total_cnt,
        ROUND(SUM(CASE WHEN {col} IS NULL THEN 1 ELSE 0 END) / COUNT(*), 4) AS null_rate
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 -- ERROR if null_cnt > 0
 ```
 
@@ -61,7 +61,7 @@ FROM {table} WHERE dt = '${dt}';
 
 ```sql
 SELECT SUM(CASE WHEN TRIM({col}) = '' THEN 1 ELSE 0 END) AS empty_cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 -- WARN if empty_cnt > 0
 ```
 
@@ -74,9 +74,9 @@ FROM {table} WHERE dt = '${dt}';
 | 阈值 | 当日分区存在 |
 
 ```sql
-SELECT COUNT(DISTINCT dt) AS partition_cnt
+SELECT COUNT(DISTINCT stat_date) AS partition_cnt
 FROM {table}
-WHERE dt = '${dt}';
+WHERE stat_date = '${stat_date}';
 -- FATAL if partition_cnt = 0
 ```
 
@@ -96,7 +96,7 @@ WHERE dt = '${dt}';
 SELECT COUNT(*) AS dup_group_cnt
 FROM (
     SELECT {pk_cols}, COUNT(*) AS cnt
-    FROM {table} WHERE dt = '${dt}'
+    FROM {table} WHERE stat_date = '${stat_date}'
     GROUP BY {pk_cols}
     HAVING COUNT(*) > 1
 ) t;
@@ -117,7 +117,7 @@ SELECT total_cnt - distinct_cnt AS dup_cnt,
 FROM (
     SELECT COUNT(*) AS total_cnt,
            COUNT(DISTINCT {all_cols_concat}) AS distinct_cnt
-    FROM {table} WHERE dt = '${dt}'
+    FROM {table} WHERE stat_date = '${stat_date}'
 ) t;
 -- WARN if dup_rate > 0.01
 ```
@@ -136,7 +136,7 @@ FROM (
 
 ```sql
 SELECT SUM(CASE WHEN {col} < 0 THEN 1 ELSE 0 END) AS negative_cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 -- ERROR if negative_cnt > 0
 ```
 
@@ -150,7 +150,7 @@ FROM {table} WHERE dt = '${dt}';
 
 ```sql
 SELECT SUM(CASE WHEN {col} < 0 OR {col} > 1 THEN 1 ELSE 0 END) AS out_cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 -- ERROR if out_cnt > 0
 ```
 
@@ -164,7 +164,7 @@ FROM {table} WHERE dt = '${dt}';
 
 ```sql
 SELECT SUM(CASE WHEN {col} NOT IN (0, 1) THEN 1 ELSE 0 END) AS invalid_cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 -- ERROR if invalid_cnt > 0
 ```
 
@@ -178,7 +178,7 @@ FROM {table} WHERE dt = '${dt}';
 
 ```sql
 SELECT SUM(CASE WHEN {col} < 0 THEN 1 ELSE 0 END) AS negative_cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 -- ERROR if negative_cnt > 0
 ```
 
@@ -193,11 +193,11 @@ FROM {table} WHERE dt = '${dt}';
 ```sql
 -- Hive
 SELECT SUM(CASE WHEN {col} NOT RLIKE '^\\d{4}-\\d{2}-\\d{2}$' THEN 1 ELSE 0 END) AS bad_cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 
 -- Impala / Doris
 SELECT SUM(CASE WHEN {col} NOT REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN 1 ELSE 0 END) AS bad_cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 ```
 
 ### DQC-V06: 天数合理范围
@@ -210,7 +210,7 @@ FROM {table} WHERE dt = '${dt}';
 
 ```sql
 SELECT SUM(CASE WHEN {col} < 0 OR {col} > 3650 THEN 1 ELSE 0 END) AS out_cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 -- WARN if out_cnt > 0
 ```
 
@@ -225,7 +225,7 @@ FROM {table} WHERE dt = '${dt}';
 ```sql
 -- 由 COMMENT 中提取枚举值，如 "还款状态，1-正常 2-逾期 3-核销"
 SELECT SUM(CASE WHEN {col} NOT IN ({enum_values}) THEN 1 ELSE 0 END) AS invalid_cnt
-FROM {table} WHERE dt = '${dt}';
+FROM {table} WHERE stat_date = '${stat_date}';
 ```
 
 ---
@@ -244,7 +244,7 @@ FROM {table} WHERE dt = '${dt}';
 SELECT COUNT(*) AS orphan_cnt
 FROM {table} t
 LEFT JOIN {dim_table} d ON t.{code_col} = d.{code_col}
-WHERE t.dt = '${dt}' AND d.{code_col} IS NULL AND t.{code_col} IS NOT NULL;
+WHERE t.stat_date = '${stat_date}' AND d.{code_col} IS NULL AND t.{code_col} IS NOT NULL;
 -- WARN if orphan_cnt > 0
 ```
 
@@ -258,8 +258,8 @@ WHERE t.dt = '${dt}' AND d.{code_col} IS NULL AND t.{code_col} IS NOT NULL;
 
 ```sql
 SELECT ABS(
-    (SELECT SUM({tgt_amt}) FROM {target_table} WHERE dt = '${dt}')
-  - (SELECT SUM({src_amt}) FROM {source_table} WHERE dt = '${dt}')
+    (SELECT SUM({tgt_amt}) FROM {target_table} WHERE stat_date = '${stat_date}')
+  - (SELECT SUM({src_amt}) FROM {source_table} WHERE stat_date = '${stat_date}')
 ) AS diff;
 -- ERROR if diff >= 0.01
 ```
@@ -276,7 +276,7 @@ SELECT ABS(
 -- 示例: 计数 >= 0 时金额应 >= 0
 SELECT COUNT(*) AS inconsistent_cnt
 FROM {table}
-WHERE dt = '${dt}'
+WHERE stat_date = '${stat_date}'
   AND td_cnt_loan > 0
   AND td_sum_loan_amt <= 0;
 -- ERROR if inconsistent_cnt > 0
@@ -284,7 +284,7 @@ WHERE dt = '${dt}'
 -- 示例: 比率 = 分子 / 分母
 SELECT COUNT(*) AS inconsistent_cnt
 FROM {table}
-WHERE dt = '${dt}'
+WHERE stat_date = '${stat_date}'
   AND denominator > 0
   AND ABS(ratio - numerator / denominator) > 0.0001;
 ```
@@ -305,8 +305,8 @@ WHERE dt = '${dt}'
 SELECT ABS(today_cnt - yesterday_cnt) / NULLIF(yesterday_cnt, 0) AS volatility
 FROM (
     SELECT
-        (SELECT COUNT(*) FROM {table} WHERE dt = '${dt}') AS today_cnt,
-        (SELECT COUNT(*) FROM {table} WHERE dt = DATE_ADD('${dt}', -1)) AS yesterday_cnt
+        (SELECT COUNT(*) FROM {table} WHERE stat_date = '${stat_date}') AS today_cnt,
+        (SELECT COUNT(*) FROM {table} WHERE stat_date = DATE_ADD('${stat_date}', -1)) AS yesterday_cnt
 ) t;
 -- WARN if volatility > 0.5
 ```
@@ -323,8 +323,8 @@ FROM (
 SELECT ABS(today_val - yesterday_val) / NULLIF(yesterday_val, 0) AS volatility
 FROM (
     SELECT
-        (SELECT SUM({metric}) FROM {table} WHERE dt = '${dt}') AS today_val,
-        (SELECT SUM({metric}) FROM {table} WHERE dt = DATE_ADD('${dt}', -1)) AS yesterday_val
+        (SELECT SUM({metric}) FROM {table} WHERE stat_date = '${stat_date}') AS today_val,
+        (SELECT SUM({metric}) FROM {table} WHERE stat_date = DATE_ADD('${stat_date}', -1)) AS yesterday_val
 ) t;
 -- WARN if volatility > 1.0
 ```
@@ -339,20 +339,20 @@ FROM (
 
 ```sql
 WITH daily AS (
-    SELECT dt, SUM({metric}) AS val
+    SELECT stat_date, SUM({metric}) AS val
     FROM {table}
-    WHERE dt BETWEEN DATE_ADD('${dt}', -7) AND '${dt}'
-    GROUP BY dt
+    WHERE stat_date BETWEEN DATE_ADD('${stat_date}', -7) AND '${stat_date}'
+    GROUP BY stat_date
 ),
 stats AS (
     SELECT AVG(val) AS avg_val, STDDEV(val) AS std_val
-    FROM daily WHERE dt < '${dt}'  -- 排除当日
+    FROM daily WHERE stat_date < '${stat_date}'  -- 排除当日
 )
 SELECT d.val AS today_val, s.avg_val, s.std_val,
        ABS(d.val - s.avg_val) / NULLIF(s.std_val, 0) AS z_score,
        CASE WHEN ABS(d.val - s.avg_val) / NULLIF(s.std_val, 0) > 3 THEN 'WARN' ELSE 'PASS' END AS result
 FROM daily d, stats s
-WHERE d.dt = '${dt}';
+WHERE d.stat_date = '${stat_date}';
 -- WARN if z_score > 3
 ```
 
@@ -369,11 +369,11 @@ WHERE d.dt = '${dt}';
 | 阈值 | 最新分区 = 当日 |
 
 ```sql
-SELECT MAX(dt) AS latest_dt,
-       DATEDIFF('${dt}', MAX(dt)) AS lag_days,
-       CASE WHEN MAX(dt) = '${dt}' THEN 'PASS' ELSE 'FATAL' END AS result
+SELECT MAX(stat_date) AS latest_stat_date,
+       DATEDIFF('${stat_date}', MAX(stat_date)) AS lag_days,
+       CASE WHEN MAX(stat_date) = '${stat_date}' THEN 'PASS' ELSE 'FATAL' END AS result
 FROM {table};
--- FATAL if latest_dt != ${dt}
+-- FATAL if latest_stat_date != ${stat_date}
 ```
 
 ### DQC-T02: 上游依赖时效
@@ -390,7 +390,7 @@ SELECT '{source_table}' AS table_name,
        COUNT(*) AS cnt,
        CASE WHEN COUNT(*) > 0 THEN 'READY' ELSE 'NOT_READY' END AS status
 FROM {source_table}
-WHERE dt = '${dt}';
+WHERE stat_date = '${stat_date}';
 ```
 
 ---

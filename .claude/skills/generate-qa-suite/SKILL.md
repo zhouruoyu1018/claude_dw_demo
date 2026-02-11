@@ -72,8 +72,8 @@ ETL SQL + DDL + 业务需求
 |--------|------|------|
 | 目标表 | `INSERT OVERWRITE TABLE ...` | `dm.dmm_sac_loan_prod_daily` |
 | 源表列表 | `FROM` / `JOIN` 子句 | `dwd.dwd_loan_detail`, `dim.dim_product` |
-| 逻辑主键 | DDL TBLPROPERTIES `logical_primary_key` | `product_code, dt` |
-| 分区字段 | DDL `PARTITIONED BY` | `dt` |
+| 逻辑主键 | DDL TBLPROPERTIES `logical_primary_key` | `product_code, stat_date` |
+| 分区字段 | DDL `PARTITIONED BY` | `stat_date` |
 | 维度字段 | DDL 注释分组"维度字段" | `product_code`, `product_name` |
 | 指标字段 | DDL 注释分组"指标字段" | `td_sum_loan_amt`, `td_cnt_loan` |
 | 布尔字段 | `is_` / `has_` 前缀 | `is_first_overdue` |
@@ -104,7 +104,7 @@ ETL SQL + DDL + 业务需求
 ```sql
 -- ============================================================
 -- 冒烟测试: {target_table}
--- ETL 日期: ${dt}
+-- ETL 日期: ${stat_date}
 -- 生成时间: {YYYY-MM-DD HH:MM:SS}
 -- ============================================================
 
@@ -113,7 +113,7 @@ SELECT 'S-01: 目标表行数' AS test_id,
        COUNT(*)           AS result,
        CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FATAL' END AS status
 FROM {target_table}
-WHERE dt = '${dt}';
+WHERE stat_date = '${stat_date}';
 
 -- [S-02] 源表行数对比 (WARN: 比例异常时预警)
 SELECT 'S-02: 行数对比' AS test_id,
@@ -126,8 +126,8 @@ SELECT 'S-02: 行数对比' AS test_id,
        END AS status
 FROM (
     SELECT
-        (SELECT COUNT(*) FROM {source_table} WHERE dt = '${dt}') AS src_cnt,
-        (SELECT COUNT(*) FROM {target_table} WHERE dt = '${dt}') AS tgt_cnt
+        (SELECT COUNT(*) FROM {source_table} WHERE stat_date = '${stat_date}') AS src_cnt,
+        (SELECT COUNT(*) FROM {target_table} WHERE stat_date = '${stat_date}') AS tgt_cnt
 ) t;
 
 -- [S-03] 主键唯一性 (FATAL: 必须为 0)
@@ -137,7 +137,7 @@ SELECT 'S-03: 主键重复' AS test_id,
 FROM (
     SELECT {pk_cols}
     FROM {target_table}
-    WHERE dt = '${dt}'
+    WHERE stat_date = '${stat_date}'
     GROUP BY {pk_cols}
     HAVING COUNT(*) > 1
 ) dup;
@@ -147,18 +147,18 @@ SELECT 'S-04: NULL值检查' AS test_id,
        {null_check_expression}   AS result,
        CASE WHEN {null_check_expression} = 0 THEN 'PASS' ELSE 'ERROR' END AS status
 FROM {target_table}
-WHERE dt = '${dt}';
+WHERE stat_date = '${stat_date}';
 
 -- [S-05] 数据样本 (INFO: 人工检查)
 SELECT *
 FROM {target_table}
-WHERE dt = '${dt}'
+WHERE stat_date = '${stat_date}'
 LIMIT 20;
 
 -- [S-06] 分区确认 (FATAL)
 SHOW PARTITIONS {target_table};
 -- 或 Hive:
--- SELECT DISTINCT dt FROM {target_table} WHERE dt = '${dt}';
+-- SELECT DISTINCT stat_date FROM {target_table} WHERE stat_date = '${stat_date}';
 ```
 
 ### 2.3 NULL 检查表达式生成
@@ -237,7 +237,7 @@ DQC 规则是系统化的质量检查，可接入调度平台（如 Airflow、Do
 ```sql
 -- DQC 结果汇总
 SELECT
-    '${dt}'          AS check_date,
+    '${stat_date}'   AS check_date,
     rule_id,
     target,
     expected,
@@ -292,27 +292,27 @@ ORDER BY
 | 功能 | Hive | Impala | Doris |
 |------|------|--------|-------|
 | 正则匹配 | `col RLIKE 'pattern'` | `col REGEXP 'pattern'` | `col REGEXP 'pattern'` |
-| 日期函数 | `DATE_ADD(dt, -1)` | `DAYS_SUB(dt, 1)` | `DATE_SUB(dt, INTERVAL 1 DAY)` |
+| 日期函数 | `DATE_ADD(stat_date, -1)` | `DAYS_SUB(stat_date, 1)` | `DATE_SUB(partition_key, INTERVAL 1 DAY)` |
 | 分区查询 | `SHOW PARTITIONS t` | `SHOW PARTITIONS t` | `SHOW PARTITIONS FROM t` |
 | EXPLAIN | `EXPLAIN` | `EXPLAIN` | `EXPLAIN` / `EXPLAIN VERBOSE` / `EXPLAIN GRAPH` |
 
 ### 冒烟测试引擎适配
 
-- **Hive**: 使用 `${hivevar:dt}`，`RLIKE` 正则
-- **Impala**: 使用 `${var:dt}`，`REGEXP` 正则
+- **Hive**: 使用 `${hivevar:stat_date}`，`RLIKE` 正则
+- **Impala**: 使用 `${var:stat_date}`，`REGEXP` 正则
 - **Doris**: 硬编码日期或应用层替换，`REGEXP` 正则，额外输出 EXPLAIN
 
 ---
 
 ## 完整示例
 
-**目标表**: `dm.dmm_sac_loan_prod_daily`，**逻辑主键**: `product_code, dt`，**引擎**: Hive
+**目标表**: `dm.dmm_sac_loan_prod_daily`，**逻辑主键**: `product_code, stat_date`，**引擎**: Hive
 
 **自动规则匹配结果：**
 
 | 字段 | 特征 | 命中规则 |
 |------|------|---------|
-| `product_code, dt` | 逻辑主键 | DQC-U01 |
+| `product_code, stat_date` | 逻辑主键 | DQC-U01 |
 | `product_code` | 维度编码 `_code` | DQC-C02, DQC-CS01 |
 | `td_sum_loan_amt` | 金额 `DECIMAL` + `_amt` | DQC-V01, DQC-VOL02 |
 | `td_cnt_loan` | 计数 `BIGINT` + `_cnt` | DQC-V04 |

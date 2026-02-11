@@ -38,12 +38,12 @@ CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
     {his_max_xxx}         INT             COMMENT '历史最大{描述}',
     {rat_xxx}             DECIMAL(10,4)   COMMENT '{描述}={分子}/{分母}'
 )
-COMMENT '{业务含义}，{更新频率}[粒度:{col1},{col2},dt]'
-PARTITIONED BY (dt STRING COMMENT '数据日期，格式YYYY-MM-DD')
+COMMENT '{业务含义}，{更新频率}[粒度:{col1},{col2},stat_date]'
+PARTITIONED BY (stat_date STRING COMMENT '数据日期，格式YYYY-MM-DD')
 STORED AS PARQUET
 TBLPROPERTIES (
     'parquet.compression' = 'SNAPPY',
-    'logical_primary_key' = '{col1},{col2},dt',
+    'logical_primary_key' = '{col1},{col2},stat_date',
     'business_owner' = '{负责人}',
     'data_layer' = '{dm|da}'
 );

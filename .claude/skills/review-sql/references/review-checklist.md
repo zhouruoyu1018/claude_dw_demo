@@ -96,7 +96,7 @@ td_sum_loan_amt DECIMAL(18,2) COMMENT '',         -- 空 COMMENT
 
 **正例**:
 ```sql
-COMMENT '贷款产品日维度指标宽表，T+1更新[粒度:product_code,dt]'
+COMMENT '贷款产品日维度指标宽表，T+1更新[粒度:product_code,stat_date]'
 ```
 
 **反例**:
@@ -120,7 +120,7 @@ COMMENT '贷款产品日维度指标宽表，粒度为产品+日期'   -- 非标
 ```sql
 TBLPROPERTIES (
     'orc.compress' = 'SNAPPY',
-    'logical_primary_key' = 'product_code,dt'
+    'logical_primary_key' = 'product_code,stat_date'
 );
 ```
 
@@ -139,20 +139,20 @@ TBLPROPERTIES ('orc.compress' = 'SNAPPY');
 
 **判断逻辑**:
 1. 找到 `PARTITIONED BY` 子句
-2. 日分区应命名为 `dt` 或 `stat_date`
+2. 日分区应命名为 `stat_date`（Hive/Impala），Doris 统一使用 `partition_key`
 3. 月分区应命名为 `stat_month`
 4. 分区字段类型必须为 `STRING`
 
 **正例**:
 ```sql
-PARTITIONED BY (dt STRING COMMENT '数据日期')
+PARTITIONED BY (stat_date STRING COMMENT '数据日期')
 PARTITIONED BY (stat_date STRING COMMENT '统计日期')
 ```
 
 **反例**:
 ```sql
 PARTITIONED BY (p_date STRING)        -- 非标准名称
-PARTITIONED BY (dt INT)               -- 类型应为 STRING
+PARTITIONED BY (stat_date INT)         -- 类型应为 STRING
 PARTITIONED BY (data_date VARCHAR(10))-- 非标准名称和类型
 ```
 
@@ -203,13 +203,13 @@ PARTITIONED BY (data_date VARCHAR(10))-- 非标准名称和类型
 
 **判断逻辑**:
 1. 找到 `FROM` 子句的主表
-2. 检查 `WHERE` 子句是否包含 `dt = ` / `stat_date = ` / `stat_month = ` 等分区过滤
+2. 检查 `WHERE` 子句是否包含 `stat_date = ` / `stat_month = ` / `partition_key = ` 等分区过滤
 3. CTE 内的 FROM 也需检查
 
 **正例**:
 ```sql
 FROM dwd.dwd_loan_detail src
-WHERE src.dt = '${dt}'
+WHERE src.stat_date = '${stat_date}'
 ```
 
 **反例**:
@@ -236,7 +236,7 @@ WHERE src.loan_status = 'SUCCESS'    -- 有 WHERE 但缺少分区过滤
 ```sql
 LEFT JOIN dwd.dwd_repay_detail repay
     ON src.loan_id = repay.loan_id
-    AND repay.dt = '${dt}'           -- JOIN 条件中带分区过滤
+    AND repay.stat_date = '${stat_date}'  -- JOIN 条件中带分区过滤
 ```
 
 **反例**:
@@ -395,17 +395,17 @@ SUM(loan_amount) OVER (ORDER BY loan_date)   -- 缺少 PARTITION BY，全表计�
 
 **正例**:
 ```sql
-WHERE dt = '${dt}'                           -- Hive: '${hivevar:dt}'
-WHERE dt = '${var:dt}'                       -- Impala
+WHERE stat_date = '${stat_date}'             -- Hive: '${hivevar:stat_date}'
+WHERE stat_date = '${var:stat_date}'         -- Impala
 ```
 
 **反例**:
 ```sql
-WHERE dt = '2024-01-15'                      -- 硬编码日期
-WHERE dt >= '2024-01-01' AND dt <= '2024-01-31'  -- 硬编码日期范围
+WHERE stat_date = '2024-01-15'               -- 硬编码日期
+WHERE stat_date >= '2024-01-01' AND stat_date <= '2024-01-31'  -- 硬编码日期范围
 ```
 
-**例外**: 初始化脚本的 `WHERE dt BETWEEN '${start_dt}' AND '${end_dt}'` 是合规的参数化写法。
+**例外**: 初始化脚本的 `WHERE stat_date BETWEEN '${start_dt}' AND '${end_dt}'` 是合规的参数化写法。
 
 ---
 
@@ -442,8 +442,8 @@ WITH t1 AS (...),
 
 | 检查项 | Hive | Impala | Doris |
 |--------|------|--------|-------|
-| 日期加减 | `DATE_ADD(dt, N)` | `DAYS_ADD(dt, N)` | `DATE_ADD(dt, INTERVAL N DAY)` |
-| 参数写法 | `${hivevar:dt}` | `${var:dt}` | 应用层传参 |
+| 日期加减 | `DATE_ADD(stat_date, N)` | `DAYS_ADD(stat_date, N)` | `DATE_ADD(partition_key, INTERVAL N DAY)` |
+| 参数写法 | `${hivevar:stat_date}` | `${var:stat_date}` | 应用层传参 |
 | INSERT 语法 | `INSERT OVERWRITE TABLE` | `INSERT OVERWRITE` | `INSERT INTO` |
 | GROUPING_ID | `GROUPING__ID`（双下划线） | `GROUPING_ID()` | `GROUPING_ID()` |
 

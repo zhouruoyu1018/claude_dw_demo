@@ -120,7 +120,7 @@ description: 模型设计师。根据对齐后的需求字段列表，生成符�
 ### 2.1 提取维度
 
 从需求中提取 Group By Keys（维度列），例如：
-- 需求："按日+产品+渠道统计放款金额" → 维度 = `(dt, product_code, channel_code)`
+- 需求："按日+产品+渠道统计放款金额" → 维度 = `(stat_date, product_code, channel_code)`
 
 ### 2.2 候选搜索
 
@@ -322,7 +322,7 @@ DDL 模板（CREATE TABLE / ALTER TABLE）及 Impala/Doris 语法见 [references
 
 - **TBLPROPERTIES 必填**: `logical_primary_key`（逻辑主键）、`business_owner`、`data_layer`
 - **ALTER TABLE 分区表必须加 `CASCADE`**: 确保新字段应用到已有分区
-- **分区策略**: 日粒度用 `PARTITIONED BY (dt STRING)`，多维用 `(dt STRING, {enum_col} STRING)`
+- **分区策略**: 日粒度用 `PARTITIONED BY (stat_date STRING)`，多维用 `(stat_date STRING, {enum_col} STRING)`
 - **COMMENT**: 表注释末尾必须附加粒度声明 `[粒度:col1,col2]`
 
 ---
@@ -333,7 +333,7 @@ DDL 模板（CREATE TABLE / ALTER TABLE）及 Impala/Doris 语法见 [references
 
 1. **表 COMMENT**: 说明业务含义、更新频率，**末尾必须附加粒度声明**
    - 格式: `'{业务描述}，{更新频率}[粒度:{维度1},{维度2},...]'`
-   - 示例: `'贷款产品日维度指标宽表，T+1更新[粒度:product_code,dt]'`
+   - 示例: `'贷款产品日维度指标宽表，T+1更新[粒度:product_code,stat_date]'`
    - 粒度字段使用物理字段名，逗号分隔，包含分区字段
 
 2. **维度字段 COMMENT**: 说明业务含义

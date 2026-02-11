@@ -10,8 +10,8 @@
 
 | 操作 | Hive | Impala | Doris |
 |------|------|--------|-------|
-| 分区覆写 | `INSERT OVERWRITE TABLE t PARTITION (dt)` | `INSERT OVERWRITE t PARTITION (dt)` | 不支持 OVERWRITE，用 Unique Model 自动 Upsert |
-| 静态分区 | `PARTITION (dt = '2026-01-01')` | `PARTITION (dt = '2026-01-01')` | 无分区概念，用 WHERE 条件 |
+| 分区覆写 | `INSERT OVERWRITE TABLE t PARTITION (stat_date)` | `INSERT OVERWRITE t PARTITION (stat_date)` | 不支持 OVERWRITE，用 Unique Model 自动 Upsert |
+| 静态分区 | `PARTITION (stat_date = '2026-01-01')` | `PARTITION (stat_date = '2026-01-01')` | 无分区概念，用 WHERE 条件 |
 | 动态分区 | 需要 `SET hive.exec.dynamic.partition.mode=nonstrict` | 默认支持 | N/A |
 | 追加写入 | `INSERT INTO TABLE t` | `INSERT INTO t` | `INSERT INTO t` |
 
@@ -23,12 +23,12 @@
 | 日期减 | `DATE_SUB('2026-01-01', N)` | `DAYS_SUB('2026-01-01', N)` | `DATE_SUB('2026-01-01', INTERVAL N DAY)` |
 | 日期差 | `DATEDIFF(d1, d2)` — 返回天数 | `DATEDIFF(d1, d2)` | `DATEDIFF(d1, d2)` |
 | 当前日期 | `CURRENT_DATE` | `CURRENT_DATE()` | `CURDATE()` |
-| 日期格式化 | `DATE_FORMAT(dt, 'yyyy-MM-dd')` | `FROM_TIMESTAMP(ts, 'yyyy-MM-dd')` | `DATE_FORMAT(dt, '%Y-%m-%d')` |
-| 月初 | `TRUNC(dt, 'MM')` | `TRUNC(dt, 'MM')` | `DATE_TRUNC(dt, 'month')` 或 `DATE_FORMAT(dt, '%Y-%m-01')` |
-| 年初 | `TRUNC(dt, 'YY')` | `TRUNC(dt, 'YY')` | `DATE_TRUNC(dt, 'year')` |
-| 取年 | `YEAR(dt)` | `YEAR(dt)` | `YEAR(dt)` |
-| 取月 | `MONTH(dt)` | `MONTH(dt)` | `MONTH(dt)` |
-| 上月末 | `LAST_DAY(ADD_MONTHS(dt, -1))` | `LAST_DAY(MONTHS_ADD(dt, -1))` | `LAST_DAY(DATE_SUB(dt, INTERVAL 1 MONTH))` |
+| 日期格式化 | `DATE_FORMAT(stat_date, 'yyyy-MM-dd')` | `FROM_TIMESTAMP(ts, 'yyyy-MM-dd')` | `DATE_FORMAT(partition_key, '%Y-%m-%d')` |
+| 月初 | `TRUNC(stat_date, 'MM')` | `TRUNC(stat_date, 'MM')` | `DATE_TRUNC(partition_key, 'month')` 或 `DATE_FORMAT(partition_key, '%Y-%m-01')` |
+| 年初 | `TRUNC(stat_date, 'YY')` | `TRUNC(stat_date, 'YY')` | `DATE_TRUNC(partition_key, 'year')` |
+| 取年 | `YEAR(stat_date)` | `YEAR(stat_date)` | `YEAR(partition_key)` |
+| 取月 | `MONTH(stat_date)` | `MONTH(stat_date)` | `MONTH(partition_key)` |
+| 上月末 | `LAST_DAY(ADD_MONTHS(stat_date, -1))` | `LAST_DAY(MONTHS_ADD(stat_date, -1))` | `LAST_DAY(DATE_SUB(partition_key, INTERVAL 1 MONTH))` |
 
 ### 1.3 字符串函数
 
@@ -136,15 +136,15 @@ WHERE NOT EXISTS (SELECT 1 FROM t2 WHERE t2.id = t1.id)
 
 | 引擎 | 变量写法 | 命令行注入 |
 |------|---------|-----------|
-| Hive | `${hivevar:dt}` | `hive -f script.sql -hivevar dt=2026-01-27` |
-| Impala | `${var:dt}` | `impala-shell -f script.sql --var=dt=2026-01-27` |
-| Doris | 无原生变量 | 应用层拼接 或 预处理脚本替换 `${dt}` |
+| Hive | `${hivevar:stat_date}` | `hive -f script.sql -hivevar stat_date=2026-01-27` |
+| Impala | `${var:stat_date}` | `impala-shell -f script.sql --var=stat_date=2026-01-27` |
+| Doris | 无原生变量 | 应用层拼接 或 预处理脚本替换 `${partition_key}` |
 
 **Doris 变通方案：**
 ```bash
 # Shell 脚本预处理
-DT="2026-01-27"
-sed "s/\${dt}/${DT}/g" script.sql | mysql -h host -P 9030 -u user -p
+PARTITION_KEY="2026-01-27"
+sed "s/\${partition_key}/${PARTITION_KEY}/g" script.sql | mysql -h host -P 9030 -u user -p
 ```
 
 ---
@@ -187,7 +187,7 @@ SET NUM_SCANNER_THREADS=4;
 -- 统计信息
 COMPUTE STATS {table_name};
 -- 或增量统计
-COMPUTE INCREMENTAL STATS {table_name} PARTITION (dt = '${dt}');
+COMPUTE INCREMENTAL STATS {table_name} PARTITION (stat_date = '${stat_date}');
 ```
 
 ### 6.3 Doris 优化
@@ -209,7 +209,7 @@ SET is_report_success = true;
 
 ```bash
 curl -u user:password \
-  -H "label:load_${dt}" \
+  -H "label:load_${partition_key}" \
   -H "column_separator:," \
   -H "columns: col1, col2, col3" \
   -T data.csv \
@@ -224,14 +224,14 @@ INSERT INTO target_db.target_table
 SELECT
     col1, col2, col3
 FROM source_db.source_table
-WHERE dt = '${dt}';
+WHERE partition_key = '${partition_key}';
 ```
 
 ### 7.3 DELETE（Unique Model）
 
 ```sql
 DELETE FROM target_db.target_table
-WHERE dt = '${dt}' AND is_deleted = 1;
+WHERE partition_key = '${partition_key}' AND is_deleted = 1;
 ```
 
 ---

@@ -1001,11 +1001,12 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
             - update_frequency (str): 更新频率，枚举: 实时/每小时/每日/每周/每月/每季/每年/手动
             - status (str): 状态，枚举: 启用/未启用/废弃
 
-            可选字段:
-            - indicator_alias (str): 指标别名
             - statistical_caliber (str): 业务口径描述
             - calculation_logic (str): 取值逻辑，推荐格式: SELECT 字段 FROM 表 WHERE 条件；也可为计算公式如 '指标A/指标B'
             - data_source (str): 数据来源表
+
+            可选字段:
+            - indicator_alias (str): 指标别名
             - value_domain (str): 值域说明
             - sensitive (str): 敏感级别
 
@@ -1028,7 +1029,8 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
         required_fields = [
             "indicator_code", "indicator_name", "indicator_english_name",
             "indicator_category", "business_domain", "data_type",
-            "standard_type", "update_frequency", "status"
+            "standard_type", "update_frequency", "status",
+            "statistical_caliber", "calculation_logic", "data_source"
         ]
 
         for ind in indicators:
@@ -1048,11 +1050,13 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
             frequency = ind.get("update_frequency", "").strip()
             status = ind.get("status", "启用").strip()
 
+            # 提取必填字段（业务口径、取值逻辑、数据来源）
+            caliber = ind.get("statistical_caliber", "").strip()
+            logic = ind.get("calculation_logic", "").strip()
+            source = ind.get("data_source", "").strip()
+
             # 提取可选字段
             alias = ind.get("indicator_alias", "").strip() or None
-            caliber = ind.get("statistical_caliber", "").strip() or None
-            logic = ind.get("calculation_logic", "").strip() or None
-            source = ind.get("data_source", "").strip() or None
             value_domain = ind.get("value_domain", "").strip() or None
             sensitive = ind.get("sensitive", "").strip() or None
 
@@ -1596,15 +1600,15 @@ async def list_tools() -> list[Tool]:
                                 },
                                 "statistical_caliber": {
                                     "type": "string",
-                                    "description": "业务口径描述（可选）"
+                                    "description": "业务口径描述"
                                 },
                                 "calculation_logic": {
                                     "type": "string",
-                                    "description": "取值逻辑（可选），推荐格式: SELECT 字段 FROM 表 WHERE 条件；也可为计算公式如 '指标A/指标B'"
+                                    "description": "取值逻辑，推荐格式: SELECT 字段 FROM 表 WHERE 条件；也可为计算公式如 '指标A/指标B'"
                                 },
                                 "data_source": {
                                     "type": "string",
-                                    "description": "数据来源表，如 'dm.dmm_sac_loan_prod_daily'（可选）"
+                                    "description": "数据来源表，如 'dm.dmm_sac_loan_prod_daily'"
                                 },
                                 "data_type": {
                                     "type": "string",
@@ -1639,7 +1643,8 @@ async def list_tools() -> list[Tool]:
                             "required": [
                                 "indicator_code", "indicator_name", "indicator_english_name",
                                 "indicator_category", "business_domain", "data_type",
-                                "standard_type", "update_frequency"
+                                "standard_type", "update_frequency",
+                                "statistical_caliber", "calculation_logic", "data_source"
                             ]
                         }
                     },

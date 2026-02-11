@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
     -- ===== 指标字段 =====
     {metric_col}       {TYPE}          COMMENT '{注释}'
 )
-COMMENT '{业务含义}，{更新频率}[粒度:{col1},{col2},dt]'
-PARTITIONED BY (dt STRING COMMENT '数据日期，格式YYYY-MM-DD')
+COMMENT '{业务含义}，{更新频率}[粒度:{col1},{col2},stat_date]'
+PARTITIONED BY (stat_date STRING COMMENT '数据日期，格式YYYY-MM-DD')
 STORED AS PARQUET
 TBLPROPERTIES (
     'parquet.compression' = 'SNAPPY',
@@ -74,7 +74,7 @@ ALTER TABLE {schema}.{table_name} ADD COLUMNS (
 
 ```sql
 PARTITIONED BY (
-    dt            STRING    COMMENT '数据日期，格式YYYY-MM-DD',
+    stat_date     STRING    COMMENT '数据日期，格式YYYY-MM-DD',
     product_code  STRING    COMMENT '产品编码'
 )
 ```
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
     {metric_col}       {TYPE}          COMMENT '{注释}'
 )
 COMMENT '{表注释}'
-PARTITIONED BY (dt STRING COMMENT '数据日期，格式YYYY-MM-DD')
+PARTITIONED BY (stat_date STRING COMMENT '数据日期，格式YYYY-MM-DD')
 STORED AS PARQUET
 TBLPROPERTIES (
     'parquet.compression' = 'SNAPPY',
@@ -149,14 +149,14 @@ REFRESH {schema}.{table_name};
 
 CREATE TABLE IF NOT EXISTS {db}.{table_name} (
     -- ===== Key 列（维度） =====
-    `dt`               DATE            COMMENT '数据日期',
+    `partition_key`    DATE            COMMENT '数据日期',
     `{dim_col}`        {TYPE}          COMMENT '{注释}',
 
     -- ===== Value 列（指标，指定聚合方式） =====
     `{metric_col}`     {TYPE}          {AGG_TYPE}    COMMENT '{注释}'
 )
 ENGINE = OLAP
-AGGREGATE KEY (`dt`, `{dim_col}`)
+AGGREGATE KEY (`partition_key`, `{dim_col}`)
 COMMENT '{表注释}'
 DISTRIBUTED BY HASH(`{dim_col}`) BUCKETS {N}
 PROPERTIES (
@@ -184,13 +184,13 @@ PROPERTIES (
 CREATE TABLE IF NOT EXISTS {db}.{table_name} (
     -- ===== Key 列（主键） =====
     `{pk_col}`         {TYPE}          COMMENT '{注释}',
-    `dt`               DATE            COMMENT '数据日期',
+    `partition_key`    DATE            COMMENT '数据日期',
 
     -- ===== Value 列 =====
     `{value_col}`      {TYPE}          COMMENT '{注释}'
 )
 ENGINE = OLAP
-UNIQUE KEY (`{pk_col}`, `dt`)
+UNIQUE KEY (`{pk_col}`, `partition_key`)
 COMMENT '{表注释}'
 DISTRIBUTED BY HASH(`{pk_col}`) BUCKETS {N}
 PROPERTIES (
@@ -234,7 +234,7 @@ PROPERTIES (
 
 | 场景 | 推荐引擎 | DDL 要点 |
 |------|---------|---------|
-| T+1 批量报表 | Hive | PARQUET + SNAPPY，PARTITIONED BY dt |
+| T+1 批量报表 | Hive | PARQUET + SNAPPY，PARTITIONED BY stat_date |
 | 交互式即席查询 | Impala | PARQUET + SNAPPY，从 Hive 同步 |
 | 实时大屏/高并发 | Doris | 根据语义选 Aggregate/Unique/Duplicate |
 | 需要精确去重 | Doris | BITMAP_UNION 聚合类型 |

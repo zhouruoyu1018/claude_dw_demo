@@ -216,8 +216,8 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 3. 分析加工模式（简单聚合/多表关联/窗口计算/分组集）
 4. 构建 SQL 结构（CTE 拆解复杂逻辑）
 5. 生成 INSERT OVERWRITE SQL（适配目标引擎语法）
-   - 增量模式：`WHERE dt = '${dt}'`，静态分区
-   - 初始化模式：`WHERE dt BETWEEN '${start_dt}' AND '${end_dt}'`，动态分区
+   - 增量模式：`WHERE stat_date = '${stat_date}'`，静态分区
+   - 初始化模式：`WHERE stat_date BETWEEN '${start_date}' AND '${end_date}'`，动态分区
 6. **指标入库检查**: 识别新指标，询问是否注册到指标库
 7. **血缘注册**: 自动提取并注册表级/字段级血缘关系
 
@@ -477,7 +477,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 [现有表搜索]
 • search_table("loan") → 找到 dm.dmm_sac_loan_chn_daily (渠道维度)
-• 粒度对比: 现有表 = (channel_code, dt)，需求 = (product_code, dt) → 不匹配
+• 粒度对比: 现有表 = (channel_code, stat_date)，需求 = (product_code, stat_date) → 不匹配
 
 [决策] 需要新建表
 
@@ -503,11 +503,11 @@ CREATE TABLE IF NOT EXISTS dm.dmm_sac_loan_prod_daily (
     td_diff_loan_amt      DECIMAL(18,2)   COMMENT '放款金额日环比差值'
 )
 COMMENT '贷款产品日维度指标宽表 [粒度：产品编码，数据日期]'
-PARTITIONED BY (dt STRING COMMENT '数据日期')
+PARTITIONED BY (stat_date STRING COMMENT '数据日期')
 STORED AS ORC
 TBLPROPERTIES (
     'orc.compress' = 'SNAPPY',
-    'logical_primary_key' = 'product_code,dt'
+    'logical_primary_key' = 'product_code,stat_date'
 );
 
 DDL 是否符合预期？[Y/n]
@@ -525,24 +525,24 @@ WITH agg AS (
            SUM(loan_amount) AS td_sum_loan_amt,
            COUNT(loan_id)   AS td_cnt_loan
     FROM dwd.dwd_loan_detail
-    WHERE dt = '${hivevar:dt}'
+    WHERE stat_date = '${hivevar:stat_date}'
     GROUP BY product_code
 ),
 agg_prev AS (
     SELECT product_code,
            SUM(loan_amount) AS yd_sum_loan_amt
     FROM dwd.dwd_loan_detail
-    WHERE dt = DATE_ADD('${hivevar:dt}', -1)
+    WHERE stat_date = DATE_ADD('${hivevar:stat_date}', -1)
     GROUP BY product_code
 )
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily PARTITION (dt)
+INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily PARTITION (stat_date)
 SELECT
     a.product_code,
     dim.product_name,
     a.td_sum_loan_amt,
     a.td_cnt_loan,
     a.td_sum_loan_amt - COALESCE(ap.yd_sum_loan_amt, 0) AS td_diff_loan_amt,
-    '${hivevar:dt}' AS dt
+    '${hivevar:stat_date}' AS stat_date
 FROM agg a
 LEFT JOIN dim.dim_product dim ON a.product_code = dim.product_code
 LEFT JOIN agg_prev ap ON a.product_code = ap.product_code;
@@ -566,7 +566,7 @@ LEFT JOIN agg_prev ap ON a.product_code = ap.product_code;
 [冒烟测试]
 • S-01: 目标表行数 > 0
 • S-02: 源表 vs 目标表行数对比
-• S-03: 主键唯一性 (product_code, dt)
+• S-03: 主键唯一性 (product_code, stat_date)
 • S-04: 关键字段非 NULL
 • S-05: 数据样本抽查 (LIMIT 20)
 

@@ -47,8 +47,8 @@ description: ETL 代码生成。根据源表 Schema、目标表 DDL 和字段映
 
 | 模式 | 用途 | 生成文件 | 分区方式 |
 |------|------|---------|---------|
-| **incremental** (默认) | 日常调度 | 仅增量脚本 | 静态分区 `dt='${dt}'` |
-| **init** | 新表上线回刷 | 增量 + 初始化 | 动态分区 `dt BETWEEN` |
+| **incremental** (默认) | 日常调度 | 仅增量脚本 | 静态分区 `stat_date='${stat_date}'` |
+| **init** | 新表上线回刷 | 增量 + 初始化 | 动态分区 `stat_date BETWEEN` |
 
 ### 使用场景
 
@@ -74,12 +74,12 @@ description: ETL 代码生成。根据源表 Schema、目标表 DDL 和字段映
 
 | 特性 | 增量模式 | 初始化模式 |
 |------|---------|-----------|
-| **分区写入** | `PARTITION (dt = '${dt}')` | `PARTITION (dt)` (动态) |
-| **源表过滤** | `WHERE dt = '${dt}'` | `WHERE dt BETWEEN '${start_dt}' AND '${end_dt}'` |
-| **GROUP BY** | `GROUP BY dims` | `GROUP BY dims, dt` |
-| **窗口函数** | `OVER (PARTITION BY key)` | `OVER (PARTITION BY key, dt)` |
+| **分区写入** | `PARTITION (stat_date = '${stat_date}')` | `PARTITION (stat_date)` (动态) |
+| **源表过滤** | `WHERE stat_date = '${stat_date}'` | `WHERE stat_date BETWEEN '${start_date}' AND '${end_date}'` |
+| **GROUP BY** | `GROUP BY dims` | `GROUP BY dims, stat_date` |
+| **窗口函数** | `OVER (PARTITION BY key)` | `OVER (PARTITION BY key, stat_date)` |
 | **动态分区配置** | 不需要 | 必须开启（SET hive.exec.dynamic.partition） |
-| **执行参数** | `hivevar dt` | `hivevar start_dt, end_dt` |
+| **执行参数** | `hivevar stat_date` | `hivevar start_date, end_date` |
 
 ### 参数说明
 
@@ -87,13 +87,13 @@ description: ETL 代码生成。根据源表 Schema、目标表 DDL 和字段映
 
 ```bash
 # 方式 1: 指定日期范围
-hive -hivevar start_dt=2024-01-01 -hivevar end_dt=2024-12-31 \
+hive -hivevar start_date=2024-01-01 -hivevar end_date=2024-12-31 \
      -f {table_name}_init.sql
 
 # 方式 2: Shell 计算最近 N 天
-start_dt=$(date -d "30 days ago" +%Y-%m-%d)
-end_dt=$(date -d "yesterday" +%Y-%m-%d)
-hive -hivevar start_dt=$start_dt -hivevar end_dt=$end_dt \
+start_date=$(date -d "30 days ago" +%Y-%m-%d)
+end_date=$(date -d "yesterday" +%Y-%m-%d)
+hive -hivevar start_date=$start_date -hivevar end_date=$end_date \
      -f {table_name}_init.sql
 ```
 
@@ -217,7 +217,7 @@ his_max_overdue_days  ← MAX(...) OVER(...) (窗口函数)
 | **多表关联** | 需要 JOIN 补充字段 | FROM ... JOIN ... GROUP BY |
 | **窗口计算** | 需要排名、累计、环比 | 子查询/CTE + Window Functions |
 | **分组集** | 多维度组合汇总 | GROUPING SETS / CUBE / ROLLUP |
-| **增量加载** | 只处理新增/变更数据 | WHERE dt = '${dt}' 分区过滤 |
+| **增量加载** | 只处理新增/变更数据 | WHERE stat_date = '${stat_date}' 分区过滤 |
 | **全量快照** | 每日全量重算 | 无增量条件，全分区覆盖 |
 | **混合模式** | 以上组合 | CTE 分层 + 最终 JOIN 组装 |
 
@@ -281,7 +281,7 @@ LEFT JOIN window_metrics w ON ...
 📊 目标: 计算每日各产品的放款金额、放款笔数、日环比
 
 📥 数据源:
-   • 主表: dwd.dwd_loan_detail (粒度: loan_id, dt)
+   • 主表: dwd.dwd_loan_detail (粒度: loan_id, stat_date)
    • 维度表: dim.dim_product (关联: product_code)
 
 📋 处理步骤:
@@ -290,7 +290,7 @@ LEFT JOIN window_metrics w ON ...
 │ Step 1: base (基础过滤)                                      │
 ├─────────────────────────────────────────────────────────────┤
 │ FROM   dwd.dwd_loan_detail                                  │
-│ WHERE  dt = '${dt}'                                         │
+│ WHERE  stat_date = '${stat_date}'                           │
 │        AND loan_status = 'SUCCESS'  -- 仅成功放款            │
 │ 输出   loan_id, product_code, loan_amount                   │
 │ 粒度   一行 = 一笔贷款                                       │
@@ -313,7 +313,7 @@ LEFT JOIN window_metrics w ON ...
 │ Step 3: agg_yesterday (昨日聚合 - 用于环比)                  │
 ├─────────────────────────────────────────────────────────────┤
 │ FROM   dwd.dwd_loan_detail                                  │
-│ WHERE  dt = DATE_ADD('${dt}', -1)                           │
+│ WHERE  stat_date = DATE_ADD('${stat_date}', -1)             │
 │ GROUP BY product_code                                       │
 │ SELECT product_code,                                        │
 │        SUM(loan_amount)  AS yd_sum_loan_amt                 │
@@ -356,7 +356,7 @@ LEFT JOIN window_metrics w ON ...
 │ 2. 分母为 0 的情况是否处理?          │ ✅ 已处理│ 使用 COALESCE    │
 │ 3. NULL 值传播是否处理?              │ ✅ 已处理│ COALESCE 兜底    │
 │ 4. 粒度是否逐步收敛到目标粒度?        │ ✅ 是   │ loan_id → product_code │
-│ 5. JOIN 条件是否完整（含分区过滤）?   │ ⚠️ 待确认│ dim 表是否有 dt 分区? │
+│ 5. JOIN 条件是否完整（含分区过滤）?   │ ⚠️ 待确认│ dim 表是否有 stat_date 分区? │
 │ 6. 窗口函数的 PARTITION/ORDER 是否正确?│ N/A    │ 本次未使用窗口函数  │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -375,7 +375,7 @@ LEFT JOIN window_metrics w ON ...
 │                                     │        │             │
 │ 示例:                                │        │             │
 │ P-001: dim_product 无分区，不应加     │ ✅ 已规避│ pitfalls.md │
-│        dt 过滤                       │        │             │
+│        stat_date 过滤               │        │             │
 │ P-002: dwd_loan_detail.loan_amount  │ ⚠️ 待确认│ pitfalls.md │
 │        含负值（退款冲正）             │        │             │
 └────────────────────────────────────────────────────────────┘
@@ -399,7 +399,7 @@ LEFT JOIN window_metrics w ON ...
 | **分母为 0** | 计算比率时分母可能为 0 | `CASE WHEN denom = 0 THEN NULL ELSE ... END` 或 `NULLIF` |
 | **NULL 传播** | 聚合字段含 NULL，SUM 可能失真 | `COALESCE(col, 0)` 或 `IFNULL` |
 | **粒度收敛** | 中间步骤粒度不明确，最终粒度错误 | 每个 CTE 标注"一行 = 什么" |
-| **JOIN 分区过滤** | 维度表未按分区过滤，全表扫描 | `dim.dt = '${dt}'` 或确认维度表无分区 |
+| **JOIN 分区过滤** | 维度表未按分区过滤，全表扫描 | `dim.stat_date = '${stat_date}'` 或确认维度表无分区 |
 | **窗口函数边界** | `ROWS BETWEEN` 边界错误，累计值不对 | 确认 `UNBOUNDED PRECEDING` 等关键字 |
 
 ### 用户确认点
@@ -537,7 +537,7 @@ Doris 无需 SET 参数，通过 SQL Hint 或 Session Variable 控制：
 
 ```sql
 INSERT OVERWRITE TABLE {target_schema}.{target_table}
-PARTITION (dt)
+PARTITION (stat_date)
 SELECT
     -- ===== 维度字段 =====
     {dim_col_1},
@@ -551,12 +551,12 @@ SELECT
     {agg_expression_2}   AS {metric_col_2},
 
     -- ===== 分区字段（末尾） =====
-    '{$dt}'              AS dt
+    '${stat_date}'       AS stat_date
 
 FROM {source_schema}.{source_table} src
 LEFT JOIN {dim_schema}.{dim_table} dim
     ON src.{join_key} = dim.{join_key}
-WHERE src.dt = '${dt}'
+WHERE src.stat_date = '${stat_date}'
 GROUP BY
     {dim_col_1},
     {dim_col_2}
@@ -570,7 +570,7 @@ INSERT INTO {target_db}.{target_table}
 SELECT
     {col_list}
 FROM {source}
-WHERE dt = '${dt}'
+WHERE partition_key = '${partition_key}'
 GROUP BY {group_cols}
 ;
 ```
@@ -607,11 +607,11 @@ FROM {主表} src
 -- 关联维度: 产品信息
 LEFT JOIN {维度表} dim_prod
     ON src.product_code = dim_prod.product_code
-    AND dim_prod.dt = '${dt}'       -- 维度表也按分区过滤
+    AND dim_prod.stat_date = '${stat_date}'       -- 维度表也按分区过滤
 -- 关联事实: 还款信息
 LEFT JOIN {事实表} repay
     ON src.loan_id = repay.loan_id
-    AND repay.dt = '${dt}'
+    AND repay.stat_date = '${stat_date}'
 ```
 
 规范：
@@ -625,14 +625,14 @@ LEFT JOIN {事实表} repay
 ### 3.7 WHERE 条件规范
 
 ```sql
-WHERE src.dt = '${dt}'               -- 分区过滤（必须）
+WHERE src.stat_date = '${stat_date}'         -- 分区过滤（必须）
   AND src.is_deleted = 0             -- 逻辑删除过滤
   AND src.loan_status IN (...)       -- 业务条件
 ```
 
 - 分区过滤条件**必须写在第一行**
-- 使用 `${dt}` 参数化日期，由调度系统注入
-- Hive 中使用 `${hivevar:dt}`，Impala 中使用 `${var:dt}`
+- 使用 `${stat_date}` 参数化日期，由调度系统注入
+- Hive 中使用 `${hivevar:stat_date}`，Impala 中使用 `${var:stat_date}`
 
 ### 3.8 GROUP BY 规范
 
@@ -656,7 +656,7 @@ GROUP BY
 
 | 检查项 | 问题 | 优化 |
 |--------|------|------|
-| 分区裁剪 | WHERE 条件未包含分区字段 | 添加 `dt = '${dt}'` |
+| 分区裁剪 | WHERE 条件未包含分区字段 | 添加 `stat_date = '${stat_date}'` |
 | JOIN 爆炸 | 一对多 JOIN 导致数据膨胀 | 先聚合再 JOIN，或改用子查询 |
 | 数据倾斜 | GROUP BY 键分布不均 | Hive: `distribute by` / `skewjoin`；Doris: `COLOCATE` |
 | MapJoin | 小表未使用 MapJoin | 添加 `/*+ MAPJOIN(dim) */` 或确认自动生效 |
@@ -675,17 +675,17 @@ GROUP BY
 
 -- 1. 行数校验：目标表 vs 源表
 SELECT '目标行数' AS check_item, COUNT(*) AS cnt
-FROM {target_table} WHERE dt = '${dt}'
+FROM {target_table} WHERE stat_date = '${stat_date}'
 UNION ALL
 SELECT '源表行数', COUNT(*)
-FROM {source_table} WHERE dt = '${dt}';
+FROM {source_table} WHERE stat_date = '${stat_date}';
 
 -- 2. 主键唯一性校验
 SELECT '主键重复数' AS check_item, COUNT(*) AS cnt
 FROM (
     SELECT {pk_cols}, COUNT(*) AS dup_cnt
     FROM {target_table}
-    WHERE dt = '${dt}'
+    WHERE stat_date = '${stat_date}'
     GROUP BY {pk_cols}
     HAVING COUNT(*) > 1
 ) t;
@@ -693,7 +693,7 @@ FROM (
 -- 3. NULL 值校验（关键字段）
 SELECT '关键字段NULL数' AS check_item, COUNT(*) AS cnt
 FROM {target_table}
-WHERE dt = '${dt}'
+WHERE stat_date = '${stat_date}'
   AND ({key_col_1} IS NULL OR {key_col_2} IS NULL);
 ```
 
@@ -724,9 +724,9 @@ WHERE dt = '${dt}'
 
 | 差异项 | Hive | Impala | Doris |
 |--------|------|--------|-------|
-| 日期参数 | `${hivevar:dt}` | `${var:dt}` | 应用层传参 |
+| 日期参数 | `${hivevar:stat_date}` | `${var:stat_date}` | `${partition_key}` |
 | 覆写语法 | `INSERT OVERWRITE TABLE ... PARTITION` | 同 Hive | `INSERT INTO`（Unique Model Upsert） |
-| 日期加减 | `DATE_ADD(dt, N)` | `DAYS_ADD(dt, N)` | `DATE_ADD(dt, INTERVAL N DAY)` |
+| 日期加减 | `DATE_ADD(stat_date, N)` | `DAYS_ADD(stat_date, N)` | `DATE_ADD(partition_key, INTERVAL N DAY)` |
 
 详见 [references/engine-syntax.md](references/engine-syntax.md) 获取完整兼容性矩阵。
 
@@ -738,9 +738,9 @@ WHERE dt = '${dt}'
 
 | 变量 | 含义 | Hive 写法 | Impala 写法 |
 |------|------|-----------|-------------|
-| `${dt}` | 数据日期 | `${hivevar:dt}` | `${var:dt}` |
-| `${pre_dt}` | 前一天 | `DATE_ADD('${hivevar:dt}', -1)` | `DAYS_SUB('${var:dt}', 1)` |
-| `${month_begin}` | 月初 | `TRUNC('${hivevar:dt}', 'MM')` | `TRUNC('${var:dt}', 'MM')` |
+| `${stat_date}` | 数据日期 | `${hivevar:stat_date}` | `${var:stat_date}` |
+| `${pre_date}` | 前一天 | `DATE_ADD('${hivevar:stat_date}', -1)` | `DAYS_SUB('${var:stat_date}', 1)` |
+| `${month_begin}` | 月初 | `TRUNC('${hivevar:stat_date}', 'MM')` | `TRUNC('${var:stat_date}', 'MM')` |
 
 ### 调度集成
 
@@ -748,10 +748,10 @@ WHERE dt = '${dt}'
 
 ```bash
 # Hive
-hive -f etl_script.sql -hivevar dt=2026-01-27
+hive -f etl_script.sql -hivevar stat_date=2026-01-27
 
 # Impala
-impala-shell -f etl_script.sql --var=dt=2026-01-27
+impala-shell -f etl_script.sql --var=stat_date=2026-01-27
 ```
 
 ---
@@ -829,7 +829,7 @@ ETL 中发现以下新指标尚未入库：
             "update_frequency": "每日",
             "status": "启用",
             "statistical_caliber": "当日所有放款订单金额之和，单位：元",
-            "calculation_logic": "SELECT SUM(loan_amt) FROM dwd.dwd_loan_dtl WHERE loan_date = '${dt}' AND status = 'SUCCESS'",
+            "calculation_logic": "SELECT SUM(loan_amt) FROM dwd.dwd_loan_dtl WHERE loan_date = '${stat_date}' AND status = 'SUCCESS'",
             "data_source": "dm.dmm_sac_loan_prod_daily"
         },
         ...
@@ -886,7 +886,7 @@ ETL SQL 生成完成后，**自动提取并注册血缘关系**，记录目标�
 **解析示例**:
 
 ```sql
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily PARTITION (dt)
+INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily PARTITION (stat_date)
 SELECT ...
 FROM dwd.dwd_loan_detail src
 LEFT JOIN dim.dim_product dim_prod ON ...
@@ -987,7 +987,7 @@ LEFT JOIN agg_prev ap ON ...
 | `a + b * c` | `CUSTOM` | 完整表达式 |
 
 **跳过字段级采集的情况**:
-- 常量字段（如 `'${dt}' AS dt`）
+- 常量字段（如 `'${stat_date}' AS stat_date`）
 - 无法解析的复杂表达式
 - 用户要求跳过
 

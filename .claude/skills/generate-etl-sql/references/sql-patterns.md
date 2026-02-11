@@ -12,13 +12,13 @@
 -- 日环比：当日 vs 昨日
 LAG(td_sum_loan_amt, 1) OVER (
     PARTITION BY product_code
-    ORDER BY dt
+    ORDER BY stat_date
 ) AS yd_sum_loan_amt
 
 -- 周同比：当日 vs 上周同天
 LAG(td_sum_loan_amt, 7) OVER (
     PARTITION BY product_code
-    ORDER BY dt
+    ORDER BY stat_date
 ) AS lw_sum_loan_amt
 
 -- 月同比：当月 vs 上月同期
@@ -38,7 +38,7 @@ LAG(mon_sum_loan_amt, 1) OVER (
 ```sql
 -- Top N 客户
 ROW_NUMBER() OVER (
-    PARTITION BY dt
+    PARTITION BY stat_date
     ORDER BY loan_amount DESC
 ) AS rn
 
@@ -60,29 +60,29 @@ DENSE_RANK() OVER (
 ```sql
 -- 月初至今累计
 SUM(td_sum_loan_amt) OVER (
-    PARTITION BY product_code, SUBSTR(dt, 1, 7)
-    ORDER BY dt
+    PARTITION BY product_code, SUBSTR(stat_date, 1, 7)
+    ORDER BY stat_date
     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 ) AS mtd_sum_loan_amt
 
 -- 年初至今累计
 SUM(td_sum_loan_amt) OVER (
-    PARTITION BY product_code, SUBSTR(dt, 1, 4)
-    ORDER BY dt
+    PARTITION BY product_code, SUBSTR(stat_date, 1, 4)
+    ORDER BY stat_date
     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 ) AS ytd_sum_loan_amt
 
 -- 近7日移动平均
 AVG(td_sum_loan_amt) OVER (
     PARTITION BY product_code
-    ORDER BY dt
+    ORDER BY stat_date
     ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
 ) AS p7d_avg_loan_amt
 
 -- 近30日滑动求和
 SUM(td_sum_loan_amt) OVER (
     PARTITION BY product_code
-    ORDER BY dt
+    ORDER BY stat_date
     ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
 ) AS p30d_sum_loan_amt
 ```
@@ -123,7 +123,7 @@ LEFT JOIN dim.dim_channel dim_chn
 -- 客户维度
 LEFT JOIN dim.dim_customer dim_cust
     ON src.cust_id = dim_cust.cust_id
-    AND dim_cust.dt = '${dt}'   -- 拉链表取当日快照
+    AND dim_cust.stat_date = '${stat_date}'   -- 拉链表取当日快照
 ```
 
 ### 2.2 多事实表关联
@@ -132,17 +132,17 @@ LEFT JOIN dim.dim_customer dim_cust
 WITH
 loan_agg AS (
     SELECT product_code, SUM(loan_amount) AS sum_loan_amt
-    FROM dwd.dwd_loan_detail WHERE dt = '${dt}'
+    FROM dwd.dwd_loan_detail WHERE stat_date = '${stat_date}'
     GROUP BY product_code
 ),
 repay_agg AS (
     SELECT product_code, SUM(repay_amount) AS sum_repay_amt
-    FROM dwd.dwd_repay_detail WHERE dt = '${dt}'
+    FROM dwd.dwd_repay_detail WHERE stat_date = '${stat_date}'
     GROUP BY product_code
 ),
 overdue_agg AS (
     SELECT product_code, COUNT(loan_id) AS cnt_overdue
-    FROM dwd.dwd_overdue_detail WHERE dt = '${dt}' AND overdue_days > 0
+    FROM dwd.dwd_overdue_detail WHERE stat_date = '${stat_date}' AND overdue_days > 0
     GROUP BY product_code
 )
 SELECT
@@ -182,8 +182,8 @@ WHERE NOT EXISTS (
 FROM target_table cur
 LEFT JOIN target_table prev
     ON cur.product_code = prev.product_code
-    AND prev.dt = DATE_ADD(cur.dt, -1)
-WHERE cur.dt = '${dt}'
+    AND prev.stat_date = DATE_ADD(cur.stat_date, -1)
+WHERE cur.stat_date = '${stat_date}'
 ```
 
 ---
@@ -199,7 +199,7 @@ SELECT
     SUM(loan_amount)                     AS td_sum_loan_amt,
     GROUPING__ID                         AS grouping_id     -- Hive
 FROM dwd.dwd_loan_detail
-WHERE dt = '${dt}'
+WHERE stat_date = '${stat_date}'
 GROUP BY product_code, channel_code
 GROUPING SETS (
     (product_code, channel_code),   -- 产品 × 渠道
@@ -268,10 +268,10 @@ END AS level_desc
 ```sql
 -- 每日仅加工当日分区，覆写目标表当日分区
 INSERT OVERWRITE TABLE dm.target_table
-PARTITION (dt)
+PARTITION (stat_date)
 SELECT ...
 FROM dwd.source_table
-WHERE dt = '${dt}'   -- 仅取当日数据
+WHERE stat_date = '${stat_date}'   -- 仅取当日数据
 GROUP BY ...
 ;
 ```
@@ -281,11 +281,11 @@ GROUP BY ...
 ```sql
 -- 回溯N天数据（逾期场景：逾期状态可能延迟更新）
 INSERT OVERWRITE TABLE dm.target_table
-PARTITION (dt)
+PARTITION (stat_date)
 SELECT ...
 FROM dwd.source_table
-WHERE dt BETWEEN DATE_ADD('${dt}', -7) AND '${dt}'
-GROUP BY ..., dt
+WHERE stat_date BETWEEN DATE_ADD('${stat_date}', -7) AND '${stat_date}'
+GROUP BY ..., stat_date
 ;
 ```
 
@@ -294,11 +294,11 @@ GROUP BY ..., dt
 ```sql
 -- 每日全量重算（维度变化或口径变更时使用）
 INSERT OVERWRITE TABLE dm.target_table
-PARTITION (dt = '${dt}')
+PARTITION (stat_date = '${stat_date}')
 SELECT ...
 FROM dwd.source_table src
 -- 取所有历史数据
-WHERE src.dt <= '${dt}'
+WHERE src.stat_date <= '${stat_date}'
 GROUP BY ...
 ;
 ```
@@ -318,7 +318,7 @@ WITH dedup AS (
             ORDER BY update_time DESC
         ) AS rn
     FROM ods.source_table
-    WHERE dt = '${dt}'
+    WHERE stat_date = '${stat_date}'
 )
 SELECT * FROM dedup WHERE rn = 1;
 ```

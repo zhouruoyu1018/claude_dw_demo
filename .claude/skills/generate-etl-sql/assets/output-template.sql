@@ -42,7 +42,7 @@ WITH
         {col_2},
         {agg_expression}                 AS {metric_col}
     FROM {source_schema}.{source_table} src
-    WHERE src.dt = '${hivevar:dt}'
+    WHERE src.stat_date = '${hivevar:stat_date}'
     GROUP BY
         {col_1},
         {col_2}
@@ -57,7 +57,7 @@ WITH
 )
 
 INSERT OVERWRITE TABLE {target_schema}.{target_table}
-PARTITION (dt)
+PARTITION (stat_date)
 SELECT
     -- ===== 维度字段 =====
     {cte_alias}.{dim_col_1},                                    -- {中文注释}
@@ -76,7 +76,7 @@ SELECT
                                          AS {metric_col_2},     -- {中文注释}
 
     -- ===== 分区字段（末尾） =====
-    '${hivevar:dt}'                      AS dt
+    '${hivevar:stat_date}'               AS stat_date
 
 FROM {cte_name_1} {cte_alias}
 -- 关联维度: {目的}
@@ -95,18 +95,18 @@ LEFT JOIN {cte_name_2} {cte_alias_2}
 -- 3.1 行数校验
 SELECT '目标行数' AS check_item, COUNT(*) AS cnt
 FROM {target_schema}.{target_table}
-WHERE dt = '${hivevar:dt}'
+WHERE stat_date = '${hivevar:stat_date}'
 UNION ALL
 SELECT '源表行数', COUNT(*)
 FROM {source_schema}.{source_table}
-WHERE dt = '${hivevar:dt}';
+WHERE stat_date = '${hivevar:stat_date}';
 
 -- 3.2 主键唯一性
 SELECT '主键重复数' AS check_item, COUNT(*) AS cnt
 FROM (
     SELECT {pk_col_1}, {pk_col_2}, COUNT(*) AS dup_cnt
     FROM {target_schema}.{target_table}
-    WHERE dt = '${hivevar:dt}'
+    WHERE stat_date = '${hivevar:stat_date}'
     GROUP BY {pk_col_1}, {pk_col_2}
     HAVING COUNT(*) > 1
 ) t;
@@ -114,5 +114,5 @@ FROM (
 -- 3.3 关键字段 NULL 值
 SELECT '关键字段NULL数' AS check_item, COUNT(*) AS cnt
 FROM {target_schema}.{target_table}
-WHERE dt = '${hivevar:dt}'
+WHERE stat_date = '${hivevar:stat_date}'
   AND ({key_col_1} IS NULL OR {key_col_2} IS NULL);

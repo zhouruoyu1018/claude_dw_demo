@@ -4,9 +4,9 @@
 
 **需求：** 按日+产品维度统计放款金额、放款笔数、日环比放款金额
 
-**源表：** `dwd.dwd_loan_detail` (loan_id, product_code, loan_amount, loan_date, dt)
+**源表：** `dwd.dwd_loan_detail` (loan_id, product_code, loan_amount, loan_date, stat_date)
 
-**目标表：** `dm.dmm_sac_loan_prod_daily` (product_code, product_name, td_sum_loan_amt, td_cnt_loan, td_diff_loan_amt, dt)
+**目标表：** `dm.dmm_sac_loan_prod_daily` (product_code, product_name, td_sum_loan_amt, td_cnt_loan, td_diff_loan_amt, stat_date)
 
 ```sql
 -- ============================================================
@@ -16,7 +16,7 @@
 -- 源表:    dwd.dwd_loan_detail, dim.dim_product
 -- 粒度:    一行 = 一天 × 一产品
 -- 调度:    每日 T+1
--- 依赖:    dwd.dwd_loan_detail (dt=${dt}), dim.dim_product
+-- 依赖:    dwd.dwd_loan_detail (stat_date=${stat_date}), dim.dim_product
 -- 作者:    auto-generated
 -- 创建日期: 2026-01-27
 -- 修改记录:
@@ -37,7 +37,7 @@ agg AS (
         SUM(src.loan_amount)             AS td_sum_loan_amt,
         COUNT(src.loan_id)               AS td_cnt_loan
     FROM dwd.dwd_loan_detail src
-    WHERE src.dt = '${hivevar:dt}'
+    WHERE src.stat_date = '${hivevar:stat_date}'
     GROUP BY src.product_code
 ),
 -- CTE 2: 昨日放款金额（用于环比计算）
@@ -46,12 +46,12 @@ agg_prev AS (
         src.product_code,
         SUM(src.loan_amount)             AS yd_sum_loan_amt
     FROM dwd.dwd_loan_detail src
-    WHERE src.dt = DATE_ADD('${hivevar:dt}', -1)
+    WHERE src.stat_date = DATE_ADD('${hivevar:stat_date}', -1)
     GROUP BY src.product_code
 )
 
 INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily
-PARTITION (dt)
+PARTITION (stat_date)
 SELECT
     -- ===== 维度字段 =====
     a.product_code,                                              -- 产品编码
@@ -65,7 +65,7 @@ SELECT
                                          AS td_diff_loan_amt,   -- 日环比差值
 
     -- ===== 分区字段 =====
-    '${hivevar:dt}'                      AS dt
+    '${hivevar:stat_date}'               AS stat_date
 
 FROM agg a
 -- 关联维度: 产品名称
@@ -100,13 +100,13 @@ LEFT JOIN agg_prev ap
 --
 -- 执行方式:
 --   方式 1 (指定日期范围):
---     hive -hivevar start_dt=2024-01-01 -hivevar end_dt=2024-12-31 \
+--     hive -hivevar start_date=2024-01-01 -hivevar end_date=2024-12-31 \
 --          -f dmm_sac_loan_prod_daily_init.sql
 --
 --   方式 2 (使用 Shell 计算最近 N 天):
---     start_dt=$(date -d "30 days ago" +%Y-%m-%d)
---     end_dt=$(date -d "yesterday" +%Y-%m-%d)
---     hive -hivevar start_dt=$start_dt -hivevar end_dt=$end_dt \
+--     start_date=$(date -d "30 days ago" +%Y-%m-%d)
+--     end_date=$(date -d "yesterday" +%Y-%m-%d)
+--     hive -hivevar start_date=$start_date -hivevar end_date=$end_date \
 --          -f dmm_sac_loan_prod_daily_init.sql
 --
 -- 注意事项:
@@ -129,27 +129,27 @@ WITH
 -- CTE 1: 时间范围内放款聚合（按日期分组）
 agg AS (
     SELECT
-        src.dt,                                  -- 新增：分区字段
+        src.stat_date,                           -- 新增：分区字段
         src.product_code,
         SUM(src.loan_amount)             AS td_sum_loan_amt,
         COUNT(src.loan_id)               AS td_cnt_loan
     FROM dwd.dwd_loan_detail src
-    WHERE src.dt BETWEEN '${hivevar:start_dt}' AND '${hivevar:end_dt}'  -- 时间范围过滤
-    GROUP BY src.dt, src.product_code          -- 新增：dt 分组
+    WHERE src.stat_date BETWEEN '${hivevar:start_date}' AND '${hivevar:end_date}'  -- 时间范围过滤
+    GROUP BY src.stat_date, src.product_code   -- 新增：stat_date 分组
 ),
 -- CTE 2: 计算每天的昨日数据（用于环比）
 agg_with_prev AS (
     SELECT
-        dt,
+        stat_date,
         product_code,
         td_sum_loan_amt,
         td_cnt_loan,
-        LAG(td_sum_loan_amt, 1) OVER (PARTITION BY product_code ORDER BY dt) AS yd_sum_loan_amt
+        LAG(td_sum_loan_amt, 1) OVER (PARTITION BY product_code ORDER BY stat_date) AS yd_sum_loan_amt
     FROM agg
 )
 
 INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily
-PARTITION (dt)  -- 动态分区
+PARTITION (stat_date)  -- 动态分区
 SELECT
     -- ===== 维度字段 =====
     a.product_code,                                              -- 产品编码
@@ -163,7 +163,7 @@ SELECT
                                          AS td_diff_loan_amt,   -- 日环比差值
 
     -- ===== 分区字段 =====
-    a.dt                                 AS dt                   -- 动态分区字段
+    a.stat_date                          AS stat_date            -- 动态分区字段
 
 FROM agg_with_prev a
 -- 关联维度: 产品名称
@@ -178,9 +178,9 @@ LEFT JOIN dim.dim_product dim_prod
 
 | 元素 | 增量脚本 | 初始化脚本 |
 |------|---------|-----------|
-| **分区写入** | `PARTITION (dt)` 静态 | `PARTITION (dt)` 动态 |
-| **时间过滤** | `WHERE dt = '${dt}'` | `WHERE dt BETWEEN '${start_dt}' AND '${end_dt}'` |
-| **GROUP BY** | `GROUP BY product_code` | `GROUP BY dt, product_code` |
+| **分区写入** | `PARTITION (stat_date)` 静态 | `PARTITION (stat_date)` 动态 |
+| **时间过滤** | `WHERE stat_date = '${stat_date}'` | `WHERE stat_date BETWEEN '${start_date}' AND '${end_date}'` |
+| **GROUP BY** | `GROUP BY product_code` | `GROUP BY stat_date, product_code` |
 | **环比计算** | LEFT JOIN 昨日聚合 | 使用 LAG 窗口函数（性能更优） |
-| **SELECT 分区** | `'${hivevar:dt}' AS dt` 静态 | `a.dt AS dt` 动态来源 |
+| **SELECT 分区** | `'${hivevar:stat_date}' AS stat_date` 静态 | `a.stat_date AS stat_date` 动态来源 |
 | **动态分区配置** | 不需要 | 必须开启 |

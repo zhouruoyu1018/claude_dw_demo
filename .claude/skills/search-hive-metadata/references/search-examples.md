@@ -66,7 +66,7 @@ get_table_detail(table_name_full="dwd.dwd_order_detail")
 ## 表详情: dwd.dwd_order_detail
 
 - **表注释**: 订单明细宽表，关联用户、商品、支付信息
-- **分区键**: dt
+- **分区键**: stat_date
 - **数据量**: 1.2TB
 - **负责人**: zhangsan
 
@@ -80,7 +80,7 @@ get_table_detail(table_name_full="dwd.dwd_order_detail")
 | pay_amount | DECIMAL(18,2) | 实付金额 |
 | order_time | TIMESTAMP | 下单时间 |
 | pay_time | TIMESTAMP | 支付时间 |
-| dt | STRING | 分区字段 |
+| stat_date | STRING | 分区字段 |
 ```
 
 ## 与 dw-requirement-triage 协作示例
@@ -170,7 +170,7 @@ get_table_detail(table_name_full="dwd.dwd_order_detail")
 | 创建时间 | create_time, created_at, gmt_create |
 | 更新时间 | update_time, updated_at, gmt_modified |
 | 状态 | status, state, order_status |
-| 日期 | dt, date, biz_date |
+| 日期 | stat_date, date, biz_date |
 
 ### 5. 搜索无结果时的处理
 

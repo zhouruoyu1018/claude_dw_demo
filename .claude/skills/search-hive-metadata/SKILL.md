@@ -176,7 +176,7 @@ register_indicator({
             "update_frequency": "每日",
             "status": "启用",
             "statistical_caliber": "当日所有放款订单金额之和，单位：元",
-            "calculation_logic": "SELECT SUM(loan_amt) FROM dwd.dwd_loan_dtl WHERE loan_date = '${dt}' AND status = 'SUCCESS'",
+            "calculation_logic": "SELECT SUM(loan_amt) FROM dwd.dwd_loan_dtl WHERE loan_date = '${stat_date}' AND status = 'SUCCESS'",
             "data_source": "dm.dmm_sac_loan_prod_daily"
         },
         {
@@ -436,7 +436,7 @@ Agent 调用: search_existing_indicators(metric_name="复购率")
 ```
 
 **步骤 3: 差异化处理**
-- 用户选 A (复用): 直接生成 `SELECT repurchase_rate FROM ads.ads_user_retention_1d WHERE dt='2024-01-15'`
+- 用户选 A (复用): 直接生成 `SELECT repurchase_rate FROM ads.ads_user_retention_1d WHERE stat_date='2024-01-15'`
 - 用户选 B (重算): 启动原有流程，去 ODS/DWD 层找原始表重新开发
 
 ---
@@ -505,7 +505,7 @@ Agent 调用: search_existing_indicators(metric_name="复购率")
 
 - **表注释**: 订单明细宽表，包含订单、用户、商品关联信息
 - **数据库**: dwd
-- **分区键**: dt
+- **分区键**: stat_date
 - **数据量**: 800GB
 - **存储格式**: ORC
 - **负责人**: zhangsan
@@ -519,7 +519,7 @@ Agent 调用: search_existing_indicators(metric_name="复购率")
 | user_id | BIGINT | 用户ID |
 | order_amount | DECIMAL(18,2) | 订单金额 |
 | order_time | TIMESTAMP | 下单时间 |
-| dt | STRING | 分区字段，格式YYYY-MM-DD |
+| stat_date | STRING | 分区字段，格式YYYY-MM-DD |
 ```
 
 ## 多源消歧策略 (Multi-Source Disambiguation)
@@ -579,11 +579,11 @@ Agent 调用: search_existing_indicators(metric_name="复购率")
 **示例**：
 
 ```
-查询粒度: (product_code, dt)
+查询粒度: (product_code, stat_date)
 
-候选表 A: dmm_sac_loan_prod_daily    粒度=(product_code, dt)     → 30分
-候选表 B: dwd_loan_detail            粒度=(loan_id, dt)          → 15分 (需聚合)
-候选表 C: dws_loan_monthly           粒度=(product_code, month)  → 0分 (更粗)
+候选表 A: dmm_sac_loan_prod_daily    粒度=(product_code, stat_date)     → 30分
+候选表 B: dwd_loan_detail            粒度=(loan_id, stat_date)          → 15分 (需聚合)
+候选表 C: dws_loan_monthly           粒度=(product_code, month)         → 0分 (更粗)
 ```
 
 ### 策略三：分层优先级（20 分）
@@ -670,7 +670,7 @@ Agent 调用: search_existing_indicators(metric_name="复购率")
 
 选择理由:
 • 该表已在指标库注册，口径为"当日放款总金额，单位：元"
-• 粒度为 (product_code, dt)，与查询需求完全匹配
+• 粒度为 (product_code, stat_date)，与查询需求完全匹配
 ```
 
 ### 需要用户确认的场景
