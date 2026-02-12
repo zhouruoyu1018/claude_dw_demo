@@ -83,9 +83,25 @@ description: SQL 审查。对任意已有 DDL/ETL SQL 脚本进行代码规范�
 |--------|------|
 | `CREATE TABLE` / `ALTER TABLE` | DDL |
 | `INSERT` / `SELECT ... FROM` | ETL |
+| `INSERT` + 动态分区 + `BETWEEN` 日期范围 | ETL (init) |
 | 同时包含 DDL + DML 语句 | 混合 |
 
 混合类型时，DDL 和 ETL 规则**均适用**。
+
+### 初始化脚本 (init) 识别与附加检查
+
+当脚本文件名含 `_init.sql` 或同时满足以下特征时，识别为初始化脚本：
+- 使用动态分区写入：`PARTITION (stat_date)` 而非 `PARTITION (stat_date = '...')`
+- 日期过滤使用范围：`BETWEEN '${start_date}' AND '${end_date}'`
+
+识别为 init 脚本后，**在常规 ETL 规则基础上追加以下检查**：
+
+| 规则ID | 检查项 | 级别 | 说明 |
+|--------|--------|------|------|
+| E-INIT-01 | 动态分区配置 | FATAL | 必须包含 `SET hive.exec.dynamic.partition=true` 和 `SET hive.exec.dynamic.partition.mode=nonstrict` |
+| E-INIT-02 | GROUP BY 含分区字段 | ERROR | `GROUP BY` 子句必须包含 `stat_date`（动态分区要求） |
+| E-INIT-03 | 窗口函数含日期分区 | WARN | `OVER (PARTITION BY ...)` 应包含 `stat_date`，避免跨日期窗口计算错误 |
+| E-INIT-04 | 参数化日期范围 | ERROR | 必须使用 `${start_date}` / `${end_date}` 参数，禁止硬编码日期 |
 
 ### 引擎识别
 

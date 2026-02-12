@@ -104,6 +104,16 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 助手: [从 Phase 4 开始，跳过 Phase 1-3]
 ```
 
+**前置数据校验**: 中途进入时，必须先检查跳过阶段的产出物是否已就绪，缺失则提示用户补充：
+
+| 起始阶段 | 必需的前置数据 | 校验方式 |
+|---------|--------------|---------|
+| `--from=ddl` (Phase 3) | 需求字段列表、建议分层/引擎 | 询问用户提供需求描述或指标列表 |
+| `--from=etl` (Phase 4) | 目标表 DDL（含主键、字段、COMMENT） | 检查用户是否提供了 DDL 文件路径或内容，未提供则要求补充 |
+| `--from=qa` (Phase 5) | ETL SQL + 目标表 DDL | 检查用户是否提供了 ETL 和 DDL 文件路径，未提供则要求补充 |
+
+未通过校验时，列出缺失项并询问用户提供，**不自动跳过**。
+
 ### 方式三：交互式确认
 
 每个阶段完成后等待用户确认再继续：
@@ -248,7 +258,11 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 **决策分支**:
 ```
 审查结果无 FATAL → 继续 Phase 5
-审查结果有 FATAL → 提示修复，修复后可复查
+审查结果有 FATAL → 提示修复，修复后复查（最多 3 轮）
+  ├─ 复查通过 → 继续 Phase 5
+  └─ 达到 3 轮仍有 FATAL → 停止循环，列出未解决项，询问用户：
+       (a) 手动修复后重新提交
+       (b) 跳过审查继续 Phase 5（记录为已知风险）
 用户跳过 → 直接进入 Phase 5
 ```
 
@@ -428,6 +442,17 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 | `search_lineage_upstream` | 查询上游依赖（我依赖谁） | Phase 2, 影响分析 |
 | `search_lineage_downstream` | 查询下游影响（谁依赖我） | 影响分析, 变更评估 |
 
+### MCP 不可用时的降级策略
+
+当 MCP Server 连接失败或超时时，按以下策略降级，**不阻塞工作流**：
+
+| 工具类型 | 降级方式 | 影响 |
+|---------|---------|------|
+| **查询类** (`search_table`, `search_by_comment`, `get_table_detail`, `list_columns`, `search_word_root`, `search_existing_indicators`, `search_lineage_*`) | 告知用户 MCP 不可用，请求用户手动提供所需信息（表名、字段列表、指标口径等），然后继续流程 | 元数据自动补全失效，依赖用户输入 |
+| **写入类** (`register_indicator`, `register_lineage`) | 将待注册数据以 JSON 格式输出到脚本头部注释中，标记 `-- [MCP-PENDING]`，提示用户 MCP 恢复后手动补录 | 指标/血缘注册延后，不影响 SQL 产出 |
+
+**检测方式**: 首次调用 MCP 工具时若返回连接错误或超时，即判定为不可用，后续步骤自动切换降级模式，不再重试。
+
 ---
 
 ## 快捷命令
@@ -435,7 +460,9 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 | 命令 | 说明 |
 |------|------|
 | `/dw-workflow` | 启动完整流程 |
-| `/dw-workflow --from=ddl` | 从 Phase 3 开始 |
+| `/dw-workflow --from=ddl` | 从 Phase 3 开始（需提供需求描述） |
+| `/dw-workflow --from=etl` | 从 Phase 4 开始（需提供 DDL） |
+| `/dw-workflow --from=qa` | 从 Phase 5 开始（需提供 ETL + DDL） |
 | `/dw-workflow --step` | 逐步执行，每步确认 |
 | `/dw-workflow --review` | ETL 生成后执行 SQL 审查（Phase 4.5） |
 | `/dw-workflow --dry-run` | 仅分析，不生成文件 |

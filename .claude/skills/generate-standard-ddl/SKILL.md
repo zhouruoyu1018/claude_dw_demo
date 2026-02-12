@@ -126,6 +126,8 @@ description: 模型设计师。根据对齐后的需求字段列表，生成符�
 
 调用 `search_hive_metadata` 的 `search_table` 或 `search_by_comment` 搜索同主题表。
 
+**MCP 不可用时降级**: 若 MCP Server 连接失败，询问用户是否有已知的同主题表，由用户手动提供表名后继续决策流程；若用户无法提供，默认走 CASE B（新建表）。
+
 ### 2.3 决策逻辑
 
 | 情况 | 条件 | 动作 |

@@ -156,6 +156,7 @@ hive -hivevar start_date=$start_date -hivevar end_date=$end_date \
 1. 调用 `search_existing_indicators` 检查指标库
    - 命中 → 直接采用 `source_table` 指定的表
    - 未命中 → 进入综合评分
+   - MCP 不可用 → 跳过指标库检查，直接进入综合评分
 
 2. 对候选表进行综合评分：
    - 粒度完全匹配 +30，需聚合 +15，更粗 +0
@@ -813,7 +814,7 @@ ETL 中发现以下新指标尚未入库：
 - `standard_type`: 枚举 `数值类`/`日期类`/`文本类`/`枚举类`/`时间类`
 - `update_frequency`: 枚举 `实时`/`每小时`/`每日`/`每周`/`每月`/`每季`/`每年`/`手动`
 - `status`: 枚举 `启用`/`未启用`/`废弃`，默认 `启用`
-- `calculation_logic`（推荐填写）: 格式 `SELECT 字段 FROM 表 WHERE 条件`
+- `calculation_logic`（必填）: 格式 `SELECT 字段 FROM 表 WHERE 条件`
 
 ```
 调用: register_indicator({
@@ -837,6 +838,15 @@ ETL 中发现以下新指标尚未入库：
     "created_by": "zhangsan"
 })
 ```
+
+**失败处理**:
+
+| 失败类型 | 处理方式 |
+|---------|---------|
+| MCP 不可用（连接失败/超时） | 将指标 JSON 输出到 ETL 脚本头部注释，标记 `-- [MCP-PENDING] register_indicator: {...}`，提示用户 MCP 恢复后补录 |
+| 调用返回错误（重复编码/参数校验失败等） | 展示错误信息给用户，自动修正可修正项（如编码冲突则追加后缀重试 1 次），不可修正项标记为 `-- [REGISTER-FAILED]` 并附上错误原因 |
+
+无论成功与否，**不阻塞后续步骤**（Step 6 血缘注册、Phase 5 测试生成照常进行）。
 
 ### 5.4 判断是否建议入库
 
@@ -931,6 +941,15 @@ LEFT JOIN agg_prev ap ON ...
     "created_by": "auto"
 })
 ```
+
+**失败处理**:
+
+| 失败类型 | 处理方式 |
+|---------|---------|
+| MCP 不可用（连接失败/超时） | 将血缘 JSON 输出到 ETL 脚本头部注释，标记 `-- [MCP-PENDING] register_lineage: {...}`，提示用户 MCP 恢复后补录 |
+| 调用返回错误（目标表不存在/参数错误等） | 展示错误信息给用户，标记为 `-- [LINEAGE-FAILED]` 并附上错误原因 |
+
+无论成功与否，**不阻塞后续步骤**（Phase 5 测试生成照常进行）。
 
 ### 6.4 在脚本头部添加血缘注释
 

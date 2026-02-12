@@ -17,7 +17,7 @@ description: 测试与 DQC 生成。根据 ETL SQL 和业务需求，自动生�
 
 | 来源 | 内容 | 必需 |
 |------|------|------|
-| `generate-etl-sql` | ETL SQL 脚本（含源表、目标表、加工逻辑） | 是 |
+| `generate-etl-sql` | ETL SQL 脚本（增量 `_etl.sql` 或初始化 `_init.sql`） | 是 |
 | `generate-standard-ddl` | 目标表 DDL（含逻辑主键、字段类型、COMMENT） | 是 |
 | 业务需求 / `dw-requirement-triage` | 业务规则、指标口径、预期范围 | 是 |
 | 引擎类型 | Hive / Impala / Doris | 是 |
@@ -81,6 +81,18 @@ ETL SQL + DDL + 业务需求
 | 比率字段 | 类型 `DECIMAL(10,4)` + COMMENT 含"率" | `rat_overdue_m1` |
 | 计数字段 | 类型 `BIGINT` + COMMENT 含"笔数/件数" | `td_cnt_loan` |
 | 引擎类型 | 脚本 SET 参数或用户指定 | Hive / Impala / Doris |
+| 脚本类型 | 文件名 `_init.sql` 或动态分区特征 | 增量 / 初始化 |
+
+### 初始化脚本 (init) 的测试差异
+
+当输入为 `_init.sql` 时，测试生成须适配以下差异：
+
+| 测试项 | 增量脚本 | 初始化脚本 |
+|--------|---------|-----------|
+| **冒烟测试分区** | 验证单个 `stat_date = '${stat_date}'` | 验证日期范围 `stat_date BETWEEN '${start_date}' AND '${end_date}'` 内多个分区均有数据 |
+| **分区完整性** | 不需要 | 追加检查：回刷范围内每个日期分区均存在且行数 > 0 |
+| **跨分区一致性** | 不需要 | 追加检查：相邻日期分区的行数波动率不超过阈值（默认 50%） |
+| **动态分区配置** | 不需要 | 追加检查：脚本包含 `SET hive.exec.dynamic.partition=true` |
 
 ---
 

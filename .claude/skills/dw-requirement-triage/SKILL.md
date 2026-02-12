@@ -47,7 +47,7 @@ description: 从业务需求文档中识别并提取数据仓库开发相关内�
 - `ODS`：原始数据接入（埋点、业务库同步）
 - `DWD`：明细数据清洗（字段标准化、数据质量）
 - `DWS`：汇总数据（预聚合指标）
-- `ADS`：应用数据（直接支撑报表/接口）
+- `DA`：应用数据（直接支撑报表/接口）
 
 **引擎选择建议：**
 - **Hive (Tez)**：大批量历史数据处理、复杂ETL、T+1报表
@@ -79,6 +79,8 @@ search_by_comment(term="放款金额")
 - `search_by_comment`: 按业务术语搜索
 - `get_table_detail`: 获取表详情
 - `list_columns`: 获取字段列表
+
+**MCP 不可用时降级**: 若 MCP Server 连接失败，跳过自动补全，将"数据来源"和"相关字段"标记为"待补全（MCP 不可用）"，不阻塞后续步骤。
 
 **补全规则**:
 1. 对每个需求中的指标/维度，调用 `search_by_comment` 查找对应字段
@@ -141,7 +143,7 @@ search_by_comment(term="放款金额")
 - **涉及指标**: [指标1, 指标2, ...]
 - **涉及维度**: [维度1, 维度2, ...]
 - **时间粒度**: [实时 | 小时 | 日 | 周 | 月]
-- **建议分层**: [ODS | DWD | DWS | ADS]
+- **建议分层**: [ODS | DWD | DWS | DA]
 - **建议引擎**: [Hive | Impala | Doris]
 - **数据来源**: [由 search-hive-metadata 补全，如 dwd.dwd_order_detail]
 - **相关字段**: [由 search-hive-metadata 补全，如 order_amount(订单金额), order_id(订单ID)]
@@ -188,7 +190,7 @@ search_by_comment(term="放款金额")
 - **涉及指标**: 退款单量, 退款金额, 周环比
 - **涉及维度**: 日期, 退款原因
 - **时间粒度**: 日
-- **建议分层**: ADS
+- **建议分层**: DA
 - **建议引擎**: Impala (交互式查询) 或 Doris (如需实时)
 - **优先级评估**: 高
 - **备注**: 需要 DWS 层预聚合退款汇总表

@@ -31,6 +31,13 @@ description: Hive 元数据搜索服务，通过 MCP Server 连接 MySQL 元数�
 2. MySQL 中已存在 `tbl_base_info` 元数据表
 3. Claude Code 已配置 MCP Server 连接
 
+## MCP 不可用时的降级策略
+
+当 MCP Server 连接失败或超时时，本 skill 的工具均不可用。调用方 skill 应按以下策略降级：
+
+- **查询类工具**（search_table、search_by_comment、get_table_detail、list_columns、search_word_root、search_existing_indicators、search_lineage_*）：告知用户 MCP 不可用，请求用户手动提供所需信息，然后继续流程
+- **写入类工具**（register_indicator、register_lineage）：将待注册数据以 JSON 格式输出到脚本注释中，标记 `-- [MCP-PENDING]`，待 MCP 恢复后补录
+
 ## MCP Server 部署
 
 ### 1. 安装依赖

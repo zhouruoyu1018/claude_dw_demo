@@ -63,7 +63,7 @@
 
 **示例**：
 ```sql
-CREATE TABLE ads_sales_daily (
+CREATE TABLE da_sales_daily (
     dt DATE,
     product_id BIGINT,
     sales_amount DECIMAL(18,2) SUM,
@@ -124,7 +124,7 @@ DISTRIBUTED BY HASH(user_id) BUCKETS 10;
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  ADS (应用层)                                            │
+│  DA (应用层)                                             │
 │  ├─ Doris: 实时报表、高并发接口                           │
 │  └─ Impala: 交互式分析、BI工具对接                        │
 ├─────────────────────────────────────────────────────────┤
@@ -173,7 +173,7 @@ DISTRIBUTED BY HASH(user_id) BUCKETS 10;
 ### 模式3: 全链路 Doris
 
 ```
-数据源 → Doris ODS (Stream Load) → Doris DWD → Doris ADS
+数据源 → Doris ODS (Stream Load) → Doris DWD → Doris DA
               ↓                        ↓            ↓
          Kafka实时              SQL转换      实时报表
 ```
