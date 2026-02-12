@@ -133,6 +133,7 @@ ods (原始层)      ← 原始数据接入
 | `generate-etl-sql` | `generate-etl-sql.skill` | ETL 代码生成，编写 Hive/Impala/Doris SQL |
 | `generate-qa-suite` | `generate-qa-suite.skill` | 测试与 DQC 生成，冒烟测试 + 质量规则 + Doris 性能分析 |
 | `review-sql` | `.claude/skills/review-sql/SKILL.md` | SQL 审查，检查现有 DDL/ETL 脚本规范合规性 |
+| `refactor-sql` | `.claude/skills/refactor-sql/SKILL.md` | SQL 重构与自动改写，支持 code/perf/compliance/migrate |
 | `dw-dev-workflow` | `dw-dev-workflow.skill` | **主控工作流**，串联以上所有 skill |
 
 ## Skills 配置
