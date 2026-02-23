@@ -6,13 +6,13 @@
 
 **源表：** `dwd.dwd_loan_detail` (loan_id, product_code, loan_amount, loan_date, stat_date)
 
-**目标表：** `dm.dmm_sac_loan_prod_daily` (product_code, product_name, td_sum_loan_amt, td_cnt_loan, td_diff_loan_amt, stat_date)
+**目标表：** `ph_sac_dmm.dmm_sac_loan_prod_daily` (product_code, product_name, td_sum_loan_amt, td_cnt_loan, td_diff_loan_amt, stat_date)
 
 ```sql
 -- ============================================================
 -- 脚本:    dm/dmm_sac_loan_prod_daily_etl.sql
 -- 功能:    加工贷款产品日维度指标宽表
--- 目标表:  dm.dmm_sac_loan_prod_daily
+-- 目标表:  ph_sac_dmm.dmm_sac_loan_prod_daily
 -- 源表:    dwd.dwd_loan_detail, dim.dim_product
 -- 粒度:    一行 = 一天 × 一产品
 -- 调度:    每日 T+1
@@ -50,7 +50,7 @@ agg_prev AS (
     GROUP BY src.product_code
 )
 
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily
+INSERT OVERWRITE TABLE ph_sac_dmm.dmm_sac_loan_prod_daily
 PARTITION (stat_date)
 SELECT
     -- ===== 维度字段 =====
@@ -89,7 +89,7 @@ LEFT JOIN agg_prev ap
 -- ============================================================
 -- 脚本:    dm/dmm_sac_loan_prod_daily_init.sql
 -- 功能:    贷款产品日维度指标宽表 - 历史数据初始化
--- 目标表:  dm.dmm_sac_loan_prod_daily
+-- 目标表:  ph_sac_dmm.dmm_sac_loan_prod_daily
 -- 源表:    dwd.dwd_loan_detail, dim.dim_product
 -- 粒度:    一行 = 一天 × 一产品
 -- 作者:    auto-generated
@@ -148,7 +148,7 @@ agg_with_prev AS (
     FROM agg
 )
 
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily
+INSERT OVERWRITE TABLE ph_sac_dmm.dmm_sac_loan_prod_daily
 PARTITION (stat_date)  -- 动态分区
 SELECT
     -- ===== 维度字段 =====

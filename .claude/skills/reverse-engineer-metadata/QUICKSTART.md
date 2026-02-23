@@ -75,7 +75,7 @@ Claude 会询问：
 ```
 
 **预期输出**:
-- 目标表: `dm.dmm_sac_loan_prod_daily`
+- 目标表: `ph_sac_dmm.dmm_sac_loan_prod_daily`
 - 源表: 3 张（dwd.dwd_loan_detail, dwd.dwd_product_info, dws.dws_overdue_summary）
 - 识别指标: 8 个（td_loan_amt, td_loan_cnt, avg_loan_amt, success_rate 等）
 

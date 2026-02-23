@@ -49,7 +49,7 @@
 {
   "tool": "register_lineage",
   "arguments": {
-    "target_table": "dm.dmm_sac_loan_prod_daily",
+    "target_table": "ph_sac_dmm.dmm_sac_loan_prod_daily",
     "source_tables": [
       {
         "source_table": "dwd.dwd_loan_detail",
@@ -81,7 +81,7 @@
 ```
 ## 血缘注册结果
 
-**目标表**: `dm.dmm_sac_loan_prod_daily`
+**目标表**: `ph_sac_dmm.dmm_sac_loan_prod_daily`
 
 ### 表级血缘
 
@@ -114,7 +114,7 @@
 {
   "tool": "search_lineage_upstream",
   "arguments": {
-    "table_name": "dm.dmm_sac_loan_prod_daily",
+    "table_name": "ph_sac_dmm.dmm_sac_loan_prod_daily",
     "depth": 2,
     "include_columns": true
   }
@@ -129,7 +129,7 @@
 **返回示例**:
 
 ```
-## 上游血缘: `dm.dmm_sac_loan_prod_daily`
+## 上游血缘: `ph_sac_dmm.dmm_sac_loan_prod_daily`
 
 找到 **4** 个上游依赖:
 
@@ -189,16 +189,16 @@
 
 | 下游表 | JOIN 类型 | 关系 | 逻辑摘要 |
 |-------|----------|------|----------|
-| `dm.dmm_sac_loan_prod_daily` | FROM | ETL | 按产品维度聚合当日放款明细 |
-| `dm.dmm_sac_loan_chn_daily` | FROM | ETL | 按渠道维度聚合当日放款明细 |
+| `ph_sac_dmm.dmm_sac_loan_prod_daily` | FROM | ETL | 按产品维度聚合当日放款明细 |
+| `ph_sac_dmm.dmm_sac_loan_chn_daily` | FROM | ETL | 按渠道维度聚合当日放款明细 |
 | `dws.dws_cust_loan_summary` | FROM | ETL | 按客户维度汇总贷款信息 |
 
 ### 第 2 层影响
 
 | 下游表 | JOIN 类型 | 关系 | 逻辑摘要 |
 |-------|----------|------|----------|
-| `da.da_loan_report` | FROM | ETL | 汇总产品维度指标到报表层 |
-| `da.da_loan_report` | LEFT JOIN | ETL | 关联渠道维度指标 |
+| `ph_sac_da.da_loan_report` | FROM | ETL | 汇总产品维度指标到报表层 |
+| `ph_sac_da.da_loan_report` | LEFT JOIN | ETL | 关联渠道维度指标 |
 
 **⚠️ 变更提醒**: 修改此表前，请评估对上述下游表的影响，并通知相关负责人。
 ```
@@ -257,12 +257,12 @@ DWD 层
     ┌────┴────┬────────────┐
     ↓         ↓            ↓
 DM/DWS 层
-  dm.dmm_sac_loan_prod_daily
-  dm.dmm_sac_loan_chn_daily
+  ph_sac_dmm.dmm_sac_loan_prod_daily
+  ph_sac_dmm.dmm_sac_loan_chn_daily
   dws.dws_cust_loan_summary
          ↓
 DA 层
-  da.da_loan_report
+  ph_sac_da.da_loan_report
 ```
 
 **测试数据统计**:
@@ -281,7 +281,7 @@ DA 层
 -- 查询某表的上游
 SELECT source_table, join_type, etl_logic_summary
 FROM data_lineage
-WHERE target_table = 'dm.dmm_sac_loan_prod_daily' AND is_active = TRUE;
+WHERE target_table = 'ph_sac_dmm.dmm_sac_loan_prod_daily' AND is_active = TRUE;
 
 -- 查询某表的下游
 SELECT target_table, join_type, etl_logic_summary

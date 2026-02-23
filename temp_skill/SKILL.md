@@ -374,7 +374,7 @@ Hive 表的 TBLPROPERTIES **必须**包含以下属性：
 
 ```sql
 -- ============================================================
--- 表名:    dm.dmm_sac_loan_prod_daily
+-- 表名:    ph_sac_dmm.dmm_sac_loan_prod_daily
 -- 功能:    贷款产品日维度指标宽表
 -- 作者:    auto-generated
 -- 创建日期: 2026-01-27
@@ -382,9 +382,9 @@ Hive 表的 TBLPROPERTIES **必须**包含以下属性：
 --   2026-01-27 auto-generated 初始创建
 -- ============================================================
 
-DROP TABLE IF EXISTS dm.dmm_sac_loan_prod_daily;
+DROP TABLE IF EXISTS ph_sac_dmm.dmm_sac_loan_prod_daily;
 
-CREATE TABLE IF NOT EXISTS dm.dmm_sac_loan_prod_daily (
+CREATE TABLE IF NOT EXISTS ph_sac_dmm.dmm_sac_loan_prod_daily (
     -- ===== 维度字段 =====
     product_code          STRING          COMMENT '产品编码',
     product_name          STRING          COMMENT '产品名称',

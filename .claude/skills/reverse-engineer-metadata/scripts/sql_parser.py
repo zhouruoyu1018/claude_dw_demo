@@ -468,7 +468,7 @@ def batch_parse_sql_files(file_paths: List[str]) -> List[SQLAnalysisResult]:
 if __name__ == '__main__':
     # 测试用例
     test_sql = """
-    INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily PARTITION (dt='${hivevar:dt}')
+    INSERT OVERWRITE TABLE ph_sac_dmm.dmm_sac_loan_prod_daily PARTITION (dt='${hivevar:dt}')
     SELECT
         a.dt,
         a.product_id,

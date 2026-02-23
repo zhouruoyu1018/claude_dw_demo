@@ -2,6 +2,11 @@
 -- 模板说明: generate-etl-sql 标准输出格式
 -- 此文件为 Hive 引擎模板，Impala/Doris 需适配语法差异
 -- ============================================================
+-- {target_schema} 物理库名映射:
+--   dm 层 → Hive/Impala: ph_sac_dmm  | Doris: ph_dm_sac_drs
+--   da 层 → Hive/Impala: ph_sac_da   | Doris: ph_dm_sac_drs
+-- {source_schema} 从元数据获取，不做映射假设
+-- ============================================================
 
 
 -- ============================================================
@@ -88,31 +93,4 @@ LEFT JOIN {cte_name_2} {cte_alias_2}
 ;
 
 
--- ========================
--- [3] 数据质量校验（可选）
--- ========================
-
--- 3.1 行数校验
-SELECT '目标行数' AS check_item, COUNT(*) AS cnt
-FROM {target_schema}.{target_table}
-WHERE stat_date = '${hivevar:stat_date}'
-UNION ALL
-SELECT '源表行数', COUNT(*)
-FROM {source_schema}.{source_table}
-WHERE stat_date = '${hivevar:stat_date}';
-
--- 3.2 主键唯一性
-SELECT '主键重复数' AS check_item, COUNT(*) AS cnt
-FROM (
-    SELECT {pk_col_1}, {pk_col_2}, COUNT(*) AS dup_cnt
-    FROM {target_schema}.{target_table}
-    WHERE stat_date = '${hivevar:stat_date}'
-    GROUP BY {pk_col_1}, {pk_col_2}
-    HAVING COUNT(*) > 1
-) t;
-
--- 3.3 关键字段 NULL 值
-SELECT '关键字段NULL数' AS check_item, COUNT(*) AS cnt
-FROM {target_schema}.{target_table}
-WHERE stat_date = '${hivevar:stat_date}'
-  AND ({key_col_1} IS NULL OR {key_col_2} IS NULL);
+-- [3] 数据质量校验 → 由 /generate-qa-suite 统一生成

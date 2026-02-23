@@ -184,7 +184,7 @@ register_indicator({
             "status": "启用",
             "statistical_caliber": "当日所有放款订单金额之和，单位：元",
             "calculation_logic": "SELECT SUM(loan_amt) FROM dwd.dwd_loan_dtl WHERE loan_date = '${stat_date}' AND status = 'SUCCESS'",
-            "data_source": "dm.dmm_sac_loan_prod_daily"
+            "data_source": "ph_sac_dmm.dmm_sac_loan_prod_daily"
         },
         {
             "indicator_code": "IDX_LOAN_002",
@@ -197,7 +197,7 @@ register_indicator({
             "update_frequency": "每日",
             "status": "启用",
             "statistical_caliber": "当日放款订单去重计数",
-            "data_source": "dm.dmm_sac_loan_prod_daily"
+            "data_source": "ph_sac_dmm.dmm_sac_loan_prod_daily"
         }
     ],
     "created_by": "zhangsan"
@@ -265,7 +265,7 @@ register_indicator({
 注册表级和字段级血缘关系。在 ETL 开发完成后自动调用（由 `generate-etl-sql` 触发），或手动注册历史 ETL 的血缘。
 
 **参数:**
-- `target_table` (string, required): 目标表完整名，如 "dm.dmm_sac_loan_prod_daily"
+- `target_table` (string, required): 目标表完整名，如 "ph_sac_dmm.dmm_sac_loan_prod_daily"
 - `source_tables` (array, required): 源表列表，每项包含:
   - `source_table` (string): 源表完整名
   - `join_type` (string): JOIN 类型 (FROM/LEFT JOIN/INNER JOIN/RIGHT JOIN/FULL JOIN/CROSS JOIN)
@@ -286,7 +286,7 @@ register_indicator({
 **示例:**
 ```javascript
 register_lineage({
-  "target_table": "dm.dmm_sac_loan_prod_daily",
+  "target_table": "ph_sac_dmm.dmm_sac_loan_prod_daily",
   "source_tables": [
     {"source_table": "dwd.dwd_loan_detail", "join_type": "FROM"},
     {"source_table": "dim.dim_product", "join_type": "LEFT JOIN"}
@@ -309,7 +309,7 @@ register_lineage({
 查询表的上游依赖（我依赖谁）。用于数据溯源、问题排查、评估源表变更影响。
 
 **参数:**
-- `table_name` (string, required): 表完整名，如 "dm.dmm_sac_loan_prod_daily"
+- `table_name` (string, required): 表完整名，如 "ph_sac_dmm.dmm_sac_loan_prod_daily"
 - `depth` (integer, optional): 递归深度，1=仅直接依赖，2=包含二级依赖，默认 1
 - `include_columns` (boolean, optional): 是否包含字段级血缘，默认 false
 
@@ -321,7 +321,7 @@ register_lineage({
 **示例:**
 ```javascript
 search_lineage_upstream({
-  "table_name": "dm.dmm_sac_loan_prod_daily",
+  "table_name": "ph_sac_dmm.dmm_sac_loan_prod_daily",
   "depth": 2,
   "include_columns": true
 })
@@ -329,7 +329,7 @@ search_lineage_upstream({
 
 **返回示例:**
 ```
-## 上游血缘: `dm.dmm_sac_loan_prod_daily`
+## 上游血缘: `ph_sac_dmm.dmm_sac_loan_prod_daily`
 
 找到 **4** 个上游依赖:
 
@@ -377,14 +377,14 @@ search_lineage_downstream({
 ### 第 1 层影响
 | 下游表 | JOIN 类型 | 逻辑摘要 |
 |-------|----------|----------|
-| `dm.dmm_sac_loan_prod_daily` | FROM | 按产品维度聚合当日放款明细 |
-| `dm.dmm_sac_loan_chn_daily` | FROM | 按渠道维度聚合当日放款明细 |
+| `ph_sac_dmm.dmm_sac_loan_prod_daily` | FROM | 按产品维度聚合当日放款明细 |
+| `ph_sac_dmm.dmm_sac_loan_chn_daily` | FROM | 按渠道维度聚合当日放款明细 |
 | `dws.dws_cust_loan_summary` | FROM | 按客户维度汇总贷款信息 |
 
 ### 第 2 层影响
 | 下游表 | JOIN 类型 | 逻辑摘要 |
 |-------|----------|----------|
-| `da.da_loan_report` | FROM | 汇总产品维度指标到报表层 |
+| `ph_sac_da.da_loan_report` | FROM | 汇总产品维度指标到报表层 |
 
 **⚠️ 变更提醒**: 修改此表前，请评估对上述下游表的影响，并通知相关负责人。
 ```
@@ -668,12 +668,12 @@ Agent 调用: search_existing_indicators(metric_name="复购率")
 ┌─────────────────────────────────────────────────────────────────────┐
 │ 排名 │ 表名                        │ 总分 │ 评分明细                │
 ├─────────────────────────────────────────────────────────────────────┤
-│ 1 ⭐ │ dm.dmm_sac_loan_prod_daily  │ 78   │ 口径+40, 粒度+30, 分层+8│
+│ 1 ⭐ │ ph_sac_dmm.dmm_sac_loan_prod_daily │ 78   │ 口径+40, 粒度+30, 分层+8│
 │ 2    │ dws.dws_loan_daily          │ 45   │ 粒度+30, 分层+15        │
 │ 3    │ dwd.dwd_loan_detail         │ 23   │ 粒度+15, 分层+8         │
 └─────────────────────────────────────────────────────────────────────┘
 
-最高分与次高分差距 33 分（>10），自动选择: dm.dmm_sac_loan_prod_daily
+最高分与次高分差距 33 分（>10），自动选择: ph_sac_dmm.dmm_sac_loan_prod_daily
 
 选择理由:
 • 该表已在指标库注册，口径为"当日放款总金额，单位：元"

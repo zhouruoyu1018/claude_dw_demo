@@ -7,7 +7,7 @@
 --   2024-12-15: 新增逾期金额字段 (legacy_dev)
 -- ==============================================================================
 
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily PARTITION (dt='${hivevar:dt}')
+INSERT OVERWRITE TABLE ph_sac_dmm.dmm_sac_loan_prod_daily PARTITION (dt='${hivevar:dt}')
 SELECT
     -- 维度字段
     a.dt,

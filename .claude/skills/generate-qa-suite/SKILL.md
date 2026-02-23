@@ -70,7 +70,7 @@ ETL SQL + DDL + 业务需求
 
 | 提取项 | 来源 | 示例 |
 |--------|------|------|
-| 目标表 | `INSERT OVERWRITE TABLE ...` | `dm.dmm_sac_loan_prod_daily` |
+| 目标表 | `INSERT OVERWRITE TABLE ...` | `ph_sac_dmm.dmm_sac_loan_prod_daily` |
 | 源表列表 | `FROM` / `JOIN` 子句 | `dwd.dwd_loan_detail`, `dim.dim_product` |
 | 逻辑主键 | DDL TBLPROPERTIES `logical_primary_key` | `product_code, stat_date` |
 | 分区字段 | DDL `PARTITIONED BY` | `stat_date` |
@@ -232,6 +232,8 @@ DQC 规则是系统化的质量检查，可接入调度平台（如 Airflow、Do
 | 一致性 | DQC-CS02 | 跨层金额一致 | 汇总金额 vs 明细金额 |
 | 波动率 | DQC-VOL01 | 行数波动 | 全表 T vs T-1 (阈值 50%) |
 | 波动率 | DQC-VOL02 | 指标波动 | 核心指标 T vs T-1 (阈值 100%) |
+| 跨表一致性 | DQC-XT01 | 上游行数 ≥ 下游行数 | 多表模式 + 有依赖时 |
+| 跨表一致性 | DQC-XT02 | 共享维度键覆盖率 | 多表模式 + 有依赖时 |
 
 ### 3.3 规则严重级别
 
@@ -273,6 +275,48 @@ ORDER BY
         ELSE 5
     END;
 ```
+
+### 3.5 跨表一致性规则 (DQC-XT) — 多表模式专用
+
+仅在 plan 文件存在且当前任务有依赖（`depends_on` 非空）时生成。用于校验上下游表之间的数据一致性。
+
+| 规则编号 | 检查内容 | SQL 逻辑 | 严重级别 |
+|---------|---------|---------|---------|
+| DQC-XT01 | 上游表行数 ≥ 下游表行数（聚合比例校验） | `SELECT CASE WHEN upstream_cnt >= downstream_cnt THEN 'PASS' ELSE 'WARN' END` | WARN |
+| DQC-XT02 | 共享维度键值覆盖率（上游键值 ⊇ 下游键值） | `SELECT COUNT(*) FROM downstream WHERE dim_key NOT IN (SELECT dim_key FROM upstream)` | ERROR |
+
+**DQC-XT01 模板**:
+
+```sql
+-- [DQC-XT01] 跨表行数比例校验: {upstream_table} → {downstream_table}
+SELECT 'DQC-XT01: 跨表行数' AS rule_id,
+       '{upstream_table} → {downstream_table}' AS target,
+       'upstream_cnt >= downstream_cnt' AS expected,
+       CONCAT(CAST(u.cnt AS STRING), ' vs ', CAST(d.cnt AS STRING)) AS actual,
+       CASE WHEN u.cnt >= d.cnt THEN 'PASS' ELSE 'WARN: 下游行数超过上游' END AS result
+FROM (SELECT COUNT(*) AS cnt FROM {upstream_table} WHERE stat_date = '${stat_date}') u
+CROSS JOIN (SELECT COUNT(*) AS cnt FROM {downstream_table} WHERE stat_date = '${stat_date}') d;
+```
+
+**DQC-XT02 模板**:
+
+```sql
+-- [DQC-XT02] 共享维度键覆盖率: {downstream_table}.{dim_key} ⊆ {upstream_table}.{dim_key}
+SELECT 'DQC-XT02: 键值覆盖' AS rule_id,
+       '{downstream_table}.{dim_key}' AS target,
+       '0 (全覆盖)' AS expected,
+       CAST(COUNT(*) AS STRING) AS actual,
+       CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'ERROR: 下游存在上游缺失的键值' END AS result
+FROM (
+    SELECT DISTINCT {dim_key} FROM {downstream_table} WHERE stat_date = '${stat_date}'
+) d
+LEFT JOIN (
+    SELECT DISTINCT {dim_key} FROM {upstream_table} WHERE stat_date = '${stat_date}'
+) u ON d.{dim_key} = u.{dim_key}
+WHERE u.{dim_key} IS NULL;
+```
+
+**触发逻辑**: 读取当前任务的 req 文件，若含 `plan` 和 `task_id` 字段，则读取 plan 文件获取 `depends_on` 列表，对每个上游任务的目标表生成 DQC-XT 规则。共享维度键从两表的逻辑主键交集推断。
 
 ---
 
@@ -318,7 +362,7 @@ ORDER BY
 
 ## 完整示例
 
-**目标表**: `dm.dmm_sac_loan_prod_daily`，**逻辑主键**: `product_code, stat_date`，**引擎**: Hive
+**目标表**: `ph_sac_dmm.dmm_sac_loan_prod_daily`，**逻辑主键**: `product_code, stat_date`，**引擎**: Hive
 
 **自动规则匹配结果：**
 

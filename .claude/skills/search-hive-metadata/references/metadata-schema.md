@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS data_lineage (
     id SERIAL PRIMARY KEY,
 
     -- 目标表信息
-    target_table VARCHAR(200) NOT NULL COMMENT '目标表完整名，如 dm.dmm_sac_loan_prod_daily',
+    target_table VARCHAR(200) NOT NULL COMMENT '目标表完整名，如 ph_sac_dmm.dmm_sac_loan_prod_daily',
     target_schema VARCHAR(100) COMMENT '目标表所属库',
 
     -- 源表信息
@@ -182,8 +182,8 @@ CREATE INDEX idx_col_lineage_source ON column_lineage(source_table, source_colum
 ```sql
 INSERT INTO data_lineage (target_table, source_table, relation_type, join_type, etl_logic_summary)
 VALUES
-('dm.dmm_sac_loan_prod_daily', 'dwd.dwd_loan_detail', 'ETL', 'FROM', '按产品维度聚合放款明细'),
-('dm.dmm_sac_loan_prod_daily', 'dim.dim_product', 'ETL', 'LEFT JOIN', '关联产品维度获取产品名称');
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'dwd.dwd_loan_detail', 'ETL', 'FROM', '按产品维度聚合放款明细'),
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'dim.dim_product', 'ETL', 'LEFT JOIN', '关联产品维度获取产品名称');
 ```
 
 ### 字段级血缘
@@ -191,10 +191,10 @@ VALUES
 ```sql
 INSERT INTO column_lineage (target_table, target_column, source_table, source_column, transform_type, transform_expr)
 VALUES
-('dm.dmm_sac_loan_prod_daily', 'product_code', 'dwd.dwd_loan_detail', 'product_code', 'DIRECT', 'product_code'),
-('dm.dmm_sac_loan_prod_daily', 'product_name', 'dim.dim_product', 'product_name', 'DIRECT', 'product_name'),
-('dm.dmm_sac_loan_prod_daily', 'td_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)'),
-('dm.dmm_sac_loan_prod_daily', 'td_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)');
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_code', 'dwd.dwd_loan_detail', 'product_code', 'DIRECT', 'product_code'),
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_name', 'dim.dim_product', 'product_name', 'DIRECT', 'product_name'),
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)'),
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)');
 ```
 
 ## 常用血缘查询
@@ -204,7 +204,7 @@ VALUES
 ```sql
 SELECT source_table, join_type, etl_logic_summary
 FROM data_lineage
-WHERE target_table = 'dm.dmm_sac_loan_prod_daily'
+WHERE target_table = 'ph_sac_dmm.dmm_sac_loan_prod_daily'
   AND is_active = TRUE;
 ```
 
@@ -222,7 +222,7 @@ WHERE source_table = 'dwd.dwd_loan_detail'
 ```sql
 SELECT source_table, source_column, transform_type, transform_expr
 FROM column_lineage
-WHERE target_table = 'dm.dmm_sac_loan_prod_daily'
+WHERE target_table = 'ph_sac_dmm.dmm_sac_loan_prod_daily'
   AND target_column = 'td_sum_loan_amt';
 ```
 
@@ -317,7 +317,7 @@ CREATE TABLE IF NOT EXISTS indicator_registry (
 | business_domain | varchar(20) | 必填 | 业务域 | `贷款`/`风控`/`营销` |
 | statistical_caliber | varchar(200) | 可选 | 业务口径描述 | `当日实际放款成功的金额合计` |
 | calculation_logic | text | 可选（推荐填写） | 取值逻辑，推荐格式: `SELECT 字段 FROM 表 WHERE 条件` | `SELECT SUM(loan_amt) FROM dwd.dwd_loan_dtl WHERE status='SUCCESS'` |
-| data_source | varchar(100) | 可选 | 数据来源表 | `dm.dmm_sac_loan_prod_daily` |
+| data_source | varchar(100) | 可选 | 数据来源表 | `ph_sac_dmm.dmm_sac_loan_prod_daily` |
 | data_type | varchar(20) | 必填，枚举 | 从元数据获取的物理字段类型。可选值: `TINYINT`, `SMALLINT`, `INT`, `BIGINT`, `FLOAT`, `DOUBLE`, `DECIMAL`, `STRING`, `VARCHAR`, `CHAR`, `DATE`, `TIMESTAMP`, `BOOLEAN`, `ARRAY`, `MAP`, `STRUCT` | `DECIMAL` |
 | standard_type | varchar(10) | 必填，枚举 | 标准类型（逻辑分类）。可选值: `数值类`, `日期类`, `文本类`, `枚举类`, `时间类` | `数值类` |
 | update_frequency | varchar(10) | 必填，枚举 | 更新频率。可选值: `实时`, `每小时`, `每日`, `每周`, `每月`, `每季`, `每年`, `手动` | `每日` |

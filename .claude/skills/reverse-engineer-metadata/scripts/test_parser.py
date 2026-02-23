@@ -26,7 +26,7 @@ def test_basic_parsing():
     print("=" * 80)
 
     test_sql = """
-    INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily PARTITION (dt='${hivevar:dt}')
+    INSERT OVERWRITE TABLE ph_sac_dmm.dmm_sac_loan_prod_daily PARTITION (dt='${hivevar:dt}')
     SELECT
         a.dt,
         a.product_id,
@@ -45,7 +45,7 @@ def test_basic_parsing():
     result = parser.parse()
 
     print(f"\n✅ 目标表: {result.target_table}")
-    assert result.target_table == 'dm.dmm_sac_loan_prod_daily', "目标表解析失败"
+    assert result.target_table == 'ph_sac_dmm.dmm_sac_loan_prod_daily', "目标表解析失败"
 
     print(f"\n✅ 表级血缘 ({len(result.table_lineage)} 张源表):")
     for tl in result.table_lineage:

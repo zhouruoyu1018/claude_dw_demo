@@ -526,7 +526,7 @@ def register_lineage(
     注册表级和字段级血缘关系（写入 PostgreSQL）
 
     Args:
-        target_table: 目标表完整名，如 'dm.dmm_sac_loan_prod_daily'
+        target_table: 目标表完整名，如 'ph_sac_dmm.dmm_sac_loan_prod_daily'
         source_tables: 源表列表，每条包含:
             - source_table (str): 源表完整名
             - join_type (str): JOIN 类型，如 'FROM', 'LEFT JOIN', 'INNER JOIN'
@@ -718,7 +718,7 @@ def search_lineage_upstream(table_name: str, depth: int = 1, include_columns: bo
     查询表的上游依赖（我依赖谁）
 
     Args:
-        table_name: 表完整名，如 'dm.dmm_sac_loan_prod_daily'
+        table_name: 表完整名，如 'ph_sac_dmm.dmm_sac_loan_prod_daily'
         depth: 递归深度，默认 1（仅直接依赖）
         include_columns: 是否包含字段级血缘
 
@@ -1437,7 +1437,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "target_table": {
                         "type": "string",
-                        "description": "目标表完整名，如 'dm.dmm_sac_loan_prod_daily'"
+                        "description": "目标表完整名，如 'ph_sac_dmm.dmm_sac_loan_prod_daily'"
                     },
                     "source_tables": {
                         "type": "array",
@@ -1522,7 +1522,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "table_name": {
                         "type": "string",
-                        "description": "表完整名，如 'dm.dmm_sac_loan_prod_daily'"
+                        "description": "表完整名，如 'ph_sac_dmm.dmm_sac_loan_prod_daily'"
                     },
                     "depth": {
                         "type": "integer",
@@ -1608,7 +1608,7 @@ async def list_tools() -> list[Tool]:
                                 },
                                 "data_source": {
                                     "type": "string",
-                                    "description": "数据来源表，如 'dm.dmm_sac_loan_prod_daily'"
+                                    "description": "数据来源表，如 'ph_sac_dmm.dmm_sac_loan_prod_daily'"
                                 },
                                 "data_type": {
                                     "type": "string",

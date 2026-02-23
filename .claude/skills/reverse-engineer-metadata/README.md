@@ -9,7 +9,7 @@
 ```
 
 **预期输出**:
-- 表级血缘: `dm.dmm_sac_loan_prod_daily` ← 3 张源表
+- 表级血缘: `ph_sac_dmm.dmm_sac_loan_prod_daily` ← 3 张源表
 - 字段级血缘: 10 个字段的来源追踪
 - 识别指标: 8 个计算指标（金额、数量、比率）
 
@@ -189,7 +189,7 @@ else:
 
 2. **血缘冲突检查**
    ```python
-   existing_lineage = search_lineage_upstream(table_name='dm.dmm_sac_loan_prod_daily')
+   existing_lineage = search_lineage_upstream(table_name='ph_sac_dmm.dmm_sac_loan_prod_daily')
    if existing_lineage:
        print(f"⚠️ 该表已有血缘记录，新记录将追加（不覆盖）")
    ```
@@ -199,7 +199,7 @@ else:
 ```python
 # 1. 注册表级血缘
 register_lineage(
-    target_table='dm.dmm_sac_loan_prod_daily',
+    target_table='ph_sac_dmm.dmm_sac_loan_prod_daily',
     source_tables=[
         {'source_table': 'dwd.dwd_loan_detail', 'join_type': 'FROM'},
         {'source_table': 'dwd.dwd_product_info', 'join_type': 'LEFT JOIN', ...},
@@ -211,7 +211,7 @@ register_lineage(
 
 # 2. 注册字段级血缘
 register_lineage(
-    target_table='dm.dmm_sac_loan_prod_daily',
+    target_table='ph_sac_dmm.dmm_sac_loan_prod_daily',
     source_tables=[...],  # 同上
     column_lineage=[
         {
@@ -239,7 +239,7 @@ register_indicator(
             'indicator_category': '原子指标',
             'data_type': 'DECIMAL(20,2)',
             'update_frequency': '日',
-            'data_source': 'dm.dmm_sac_loan_prod_daily'
+            'data_source': 'ph_sac_dmm.dmm_sac_loan_prod_daily'
         },
         ...
     ]
@@ -262,7 +262,7 @@ register_indicator(
   - analysis_results/registration_log_20260208_143022.txt
 
 🔍 验证:
-  - 血缘查询: /search-lineage-upstream dm.dmm_sac_loan_prod_daily
+  - 血缘查询: /search-lineage-upstream ph_sac_dmm.dmm_sac_loan_prod_daily
   - 指标查询: /search-existing-indicators 当日放款金额
 ```
 
@@ -360,7 +360,7 @@ register_indicator(
 
 ```json
 {
-  "target_table": "dm.dmm_sac_loan_prod_daily",
+  "target_table": "ph_sac_dmm.dmm_sac_loan_prod_daily",
   "sql_file": "sql/hive/etl/dm_loan_daily.sql",
   "table_lineage": [
     {
@@ -400,7 +400,7 @@ register_indicator(
       "indicator_category": "原子指标",
       "data_type": "DECIMAL(20,2)",
       "update_frequency": "日",
-      "data_source": "dm.dmm_sac_loan_prod_daily"
+      "data_source": "ph_sac_dmm.dmm_sac_loan_prod_daily"
     },
     ...
   ]
@@ -416,7 +416,7 @@ Generated at: 2026-02-08 14:30:22
 ================================================================================
 
 [INFO] Starting analysis for: sql/hive/etl/dm_loan_daily.sql
-[INFO] Target table detected: dm.dmm_sac_loan_prod_daily
+[INFO] Target table detected: ph_sac_dmm.dmm_sac_loan_prod_daily
 [INFO] Found 3 source tables
 [INFO] Extracted 10 column lineages
 [INFO] Identified 8 indicators

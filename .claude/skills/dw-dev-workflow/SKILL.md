@@ -22,9 +22,16 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 │   │ • 识别数仓需求         │                                                 │
 │   │ • 提取指标/维度        │                                                 │
 │   │ • 确定分层/引擎        │                                                 │
+│   │ • 多表复杂度检测       │  ← Step 8.1/8.2 (新增)                         │
 │   └───────────┬───────────┘                                                 │
 │               │                                                             │
-│               ▼                                                             │
+│       ┌───────┴───────┐                                                     │
+│       ▼               ▼                                                     │
+│   [单表模式]      [多表模式]                                                 │
+│   (无 plan)    (创建 plan 文件                                               │
+│       │         + DAG 循环执行)                                              │
+│       │               │                                                     │
+│       ▼               ▼                                                     │
 │   ┌───────────────────────┐                                                 │
 │   │ Phase 2: 复用检索      │  ← search-hive-metadata                        │
 │   │ • 指标库查询           │    (MCP Server)                                │
@@ -108,8 +115,8 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 | 起始阶段 | 必需的前置数据 | 校验方式 |
 |---------|--------------|---------|
-| `--from=ddl` (Phase 3) | 需求字段列表、建议分层/引擎 | 询问用户提供需求描述或指标列表 |
-| `--from=etl` (Phase 4) | 目标表 DDL（含主键、字段、COMMENT） | 检查用户是否提供了 DDL 文件路径或内容，未提供则要求补充 |
+| `--from=ddl` (Phase 3) | 需求字段列表、建议分层/引擎 | 优先扫描 `docs/wip/` 下 `status: wip` 的需求文件；未找到则询问用户提供需求描述或指标列表 |
+| `--from=etl` (Phase 4) | 目标表 DDL + 需求清单（含指标、维度、业务逻辑描述） | 1. 扫描 `docs/wip/` 下需求文件，列出供用户选择 2. 检查用户是否提供了 DDL 文件路径或内容 3. 缺失项要求补充 |
 | `--from=qa` (Phase 5) | ETL SQL + 目标表 DDL | 检查用户是否提供了 ETL 和 DDL 文件路径，未提供则要求补充 |
 
 未通过校验时，列出缺失项并询问用户提供，**不自动跳过**。
@@ -126,6 +133,146 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 用户: 复用
 助手: 已复用现有指标，无需继续开发。
 ```
+
+---
+
+## 多表模式 (Multi-Table Mode)
+
+当需求涉及多张表（链式依赖、扇出型、混合 DAG）时，工作流自动从单表线性模式升级为多表 DAG 模式。单表需求不受影响。
+
+### 模式检测
+
+Phase 1（需求拆解）完成后，检查 `dw-requirement-triage` 的输出：
+
+```
+Phase 1 输出
+    ↓
+┌──────────────────┐
+│ 复杂度检测        │
+│ (Step 8.1 判定)  │
+└────────┬─────────┘
+    ├─ 单表 → 走现有线性流程（无 plan 文件，行为不变）
+    └─ 多表 → 创建 plan 文件 → 进入 DAG 执行循环
+```
+
+- **单表**: Phase 1 仅输出一个 `req-{table}.md` → 直接走 Phase 2→3→4→[4.5]→5
+- **多表**: Phase 1 输出 `plan-{project_name}.md` + 多个 `req-{table}.md` → 进入 DAG 循环
+
+### Task Plan 文件
+
+多表模式的编排载体为 `docs/wip/plan-{project_name}.md`，协调多个 `req-{table}.md` 文件。
+
+**文件格式**:
+
+```markdown
+---
+status: active          # active | completed | aborted
+created: 2026-02-18
+project_name: loan_overdue_report
+total_tasks: 3
+completed_tasks: 1
+---
+
+# Task Plan: loan_overdue_report
+
+## DAG
+
+` ` `
+task-1 (dmm_sac_overdue_dtl) ──┐
+                                ├──→ task-3 (da_sac_overdue_rpt)
+task-2 (dmm_sac_overdue_prod) ─┘
+` ` `
+
+## Task Registry
+
+| task_id | target_table | layer | depends_on | status | phase | req_file | created_by |
+|---------|-------------|-------|------------|--------|-------|----------|------------|
+| task-1 | dmm_sac_overdue_dtl | dm | (none) | completed | done | req-dmm_sac_overdue_dtl.md | phase1 |
+| task-2 | dmm_sac_overdue_prod | dm | (none) | in_progress | phase4_etl | req-dmm_sac_overdue_prod.md | phase1 |
+| task-3 | da_sac_overdue_rpt | da | task-1,task-2 | blocked | pending | req-da_sac_overdue_rpt.md | phase1 |
+
+## Execution Log
+
+| timestamp | task_id | event | detail |
+|-----------|---------|-------|--------|
+| 2026-02-18 10:00 | task-1 | completed | All deliverables generated |
+| 2026-02-18 10:10 | task-2 | phase4_start | ETL generation started |
+```
+
+### 单表 req 文件扩展
+
+多表模式下，每个 req 文件的 front matter 新增可选字段（单表模式不写，无破坏）：
+
+```yaml
+---
+status: wip
+target_table: dmm_sac_overdue_dtl
+plan: plan-loan_overdue_report    # 关联的 plan 文件（可选）
+task_id: task-1                    # 在 plan 中的任务 ID（可选）
+phase_progress: phase4_etl:step2.5 # 最后完成的步骤（可选，用于跨会话恢复）
+---
+```
+
+### DAG 执行循环
+
+替代线性状态机，多表模式的核心调度逻辑：
+
+```
+DAG_LOOP:
+  1. 扫描 plan，将所有依赖已完成的 blocked 任务标记为 ready
+  2. 从 ready 中取 task_id 最小的任务
+  3. 对该任务执行 Phase 2→3→4→[4.5]→5（复用现有单表逻辑）
+  4. 完成后更新 plan（status=completed），回到 1
+  5. 所有任务 completed → plan.status=completed，输出汇总
+
+  异常处理:
+  - 无 ready 任务但有未完成任务 → 循环依赖，报错让用户修正 plan
+  - Phase 4 中用户请求拆分 → 触发动态分解（见 generate-etl-sql Step 0.6）
+```
+
+**每个任务完成后的 checkpoint**:
+
+```
+═══════════════════════════════════════════════════════════════
+ ✅ task-1 (dmm_sac_overdue_dtl) 完成
+═══════════════════════════════════════════════════════════════
+
+进度: [██████░░░░] 1/3 任务完成
+
+下一个: task-2 (dmm_sac_overdue_prod) — 状态: ready
+等待中: task-3 (da_sac_overdue_rpt) — 阻塞于: task-2
+
+是否继续执行 task-2？[Y/n]
+```
+
+### 跨会话恢复
+
+当使用 `/dw-workflow --resume` 或新会话需要恢复中断的多表流程时：
+
+**恢复协议**:
+
+1. 扫描 `docs/wip/plan-*.md`（`status: active`）
+2. 多个活跃 plan 则列出让用户选择
+3. 解析 Task Registry，展示进度仪表盘：
+
+```
+═══════════════════════════════════════════════════════════════
+ 📋 恢复 Plan: loan_overdue_report
+═══════════════════════════════════════════════════════════════
+
+| task_id | target_table | status | phase |
+|---------|-------------|--------|-------|
+| task-1 | dmm_sac_overdue_dtl | ✅ completed | done |
+| task-2 | dmm_sac_overdue_prod | 🔄 in_progress | phase4_etl |
+| task-3 | da_sac_overdue_rpt | ⏳ blocked | pending |
+
+进度: [██████░░░░] 1/3 完成
+
+恢复 task-2，从 phase4_etl 继续...
+```
+
+4. 定位 `in_progress` 任务，读其 req 文件的 `phase_progress` 恢复断点
+5. 未找到 `phase_progress` 则从该任务的 Phase 2 开始
 
 ---
 
@@ -155,6 +302,8 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 建议分层: dm
 建议引擎: Hive (T+1)
 ```
+
+**持久化**: 将结构化需求清单写入 `docs/wip/req-{table_name}.md`（支持跨会话恢复）
 
 **用户确认点**: 需求拆解结果是否正确
 
@@ -219,24 +368,30 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 **触发条件**: Phase 3 完成
 
 **执行内容**:
-1. 解析源表 Schema（从 Phase 2 获取）
-2. **询问生成模式**: 是否需要生成历史数据初始化脚本？
+1. **加载需求上下文**: 从当前会话上下文或 `docs/wip/req-{table_name}.md` 读取需求信息
+2. 解析源表 Schema（从 Phase 2 获取）
+3. **生成字段映射草案**: 结合需求清单 + 源表 Schema + 目标表 DDL，自动生成映射草案
+4. **用户确认/补全映射**: 逐项展示映射，用户确认或补全计算逻辑，确认无遗漏后继续
+5. **询问生成模式**: 是否需要生成历史数据初始化脚本？
    - **默认**: 仅生成增量脚本（T+1 日常调度）
    - **可选**: 同时生成增量 + 初始化脚本（新表上线回刷）
-3. 分析加工模式（简单聚合/多表关联/窗口计算/分组集）
-4. 构建 SQL 结构（CTE 拆解复杂逻辑）
-5. 生成 INSERT OVERWRITE SQL（适配目标引擎语法）
+6. 分析加工模式（简单聚合/多表关联/窗口计算/分组集）
+7. **逻辑流程确认（Step 2.5）**: 多表关联(3+表)/窗口计算/分组集/混合模式时，**必须**先输出伪代码（数据流 + CTE 拆解 + 自检清单），等待用户确认后再生成 SQL。仅简单聚合可跳过
+8. 构建 SQL 结构（CTE 拆解复杂逻辑）
+9. 生成 INSERT OVERWRITE SQL（适配目标引擎语法）
    - 增量模式：`WHERE stat_date = '${stat_date}'`，静态分区
    - 初始化模式：`WHERE stat_date BETWEEN '${start_date}' AND '${end_date}'`，动态分区
-6. **指标入库检查**: 识别新指标，询问是否注册到指标库
-7. **血缘注册**: 自动提取并注册表级/字段级血缘关系
+10. **指标入库检查**: 识别新指标，询问是否注册到指标库
+11. **血缘注册**: 自动提取并注册表级/字段级血缘关系
 
 **输出**:
 - **增量模式**: `{table_name}_etl.sql`
 - **初始化模式**: `{table_name}_etl.sql` + `{table_name}_init.sql`
 
 **用户确认点**:
+- 字段映射草案是否正确、是否有遗漏（Step 0 确认）
 - 是否需要生成初始化脚本（新表上线场景）
+- **逻辑流程/伪代码**是否正确（Step 2.5 确认，复杂模式必须）
 - ETL 逻辑是否正确
 - 新指标是否入库
 
@@ -290,26 +445,51 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 ## 交付物汇总
 
+### 单表模式
+
 流程完成后，输出以下交付物：
 
 ```
 📦 交付物
-├── 📄 需求分析.md             ← Phase 1 输出
-├── 📄 复用分析.md             ← Phase 2 输出（指标复用/建模决策）
-├── 📄 {table_name}_ddl.sql    ← Phase 3 输出
-├── 📄 {table_name}_etl.sql    ← Phase 4 输出（日常增量，含血缘注释）
-├── 📄 {table_name}_init.sql   ← Phase 4 输出（可选，历史回刷）
-├── 📄 {table_name}_qa.sql     ← Phase 5 输出
+├── 📄 docs/wip/req-{table_name}.md  ← Phase 1 输出（需求清单 + 已确认映射，status: done）
+├── 📄 {table_name}_ddl.sql          ← Phase 3 输出
+├── 📄 {table_name}_etl.sql          ← Phase 4 输出（日常增量，含血缘注释）
+├── 📄 {table_name}_init.sql         ← Phase 4 输出（可选，历史回刷）
+├── 📄 {table_name}_qa.sql           ← Phase 5 输出
 └── 📊 元数据更新
     ├── 指标库: indicator_registry (新指标)
     └── 血缘库: data_lineage, column_lineage (自动采集)
+```
+
+### 多表模式
+
+所有任务完成后，输出汇总交付物：
+
+```
+📦 交付物 (多表模式)
+├── 📄 docs/wip/plan-{project_name}.md  ← Plan 文件（status: completed）
+├── 📂 task-1: {table_name_1}
+│   ├── 📄 docs/wip/req-{table_name_1}.md  (status: done)
+│   ├── 📄 {table_name_1}_ddl.sql
+│   ├── 📄 {table_name_1}_etl.sql
+│   ├── 📄 {table_name_1}_init.sql         (可选)
+│   └── 📄 {table_name_1}_qa.sql
+├── 📂 task-2: {table_name_2}
+│   ├── 📄 docs/wip/req-{table_name_2}.md  (status: done)
+│   ├── 📄 {table_name_2}_ddl.sql
+│   ├── 📄 {table_name_2}_etl.sql
+│   └── 📄 {table_name_2}_qa.sql
+├── ...
+└── 📊 元数据更新（统一注册）
+    ├── 指标库: indicator_registry (所有任务的新指标)
+    └── 血缘库: data_lineage, column_lineage (所有任务的血缘)
 ```
 
 ---
 
 ## 状态机
 
-工作流状态转换：
+工作流状态转换（含单表/多表分支）：
 
 ```
                     ┌──────────────────┐
@@ -323,38 +503,50 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
                              │
                              ▼
                     ┌──────────────────┐
-            ┌───────│ PHASE_2_SEARCH   │───────┐
-            │       └──────────────────┘       │
-            │ 复用                              │ 开发
-            ▼                                  ▼
-    ┌──────────────┐                  ┌──────────────────┐
-    │   COMPLETE   │                  │ PHASE_3_DDL      │
-    │  (直接复用)   │                  └────────┬─────────┘
-    └──────────────┘                           │
-                                               ▼
-                                      ┌──────────────────┐
-                                      │ PHASE_4_ETL      │
-                                      └────────┬─────────┘
-                                               │
-                                       ┌───────┴───────┐
-                                       │ --review?     │
-                                       ▼               ▼
-                              ┌──────────────┐   (跳过)
-                              │PHASE_4.5     │     │
-                              │_REVIEW (可选) │     │
-                              └──────┬───────┘     │
-                                     │             │
-                                     └──────┬──────┘
-                                            ▼
-                                      ┌──────────────────┐
-                                      │ PHASE_5_QA       │
-                                      └────────┬─────────┘
-                                               │
-                                               ▼
-                                      ┌──────────────────┐
-                                      │    COMPLETE      │
-                                      │   (全量交付)      │
-                                      └──────────────────┘
+                    │ COMPLEXITY_CHECK │
+                    └────────┬─────────┘
+                    ┌────────┴────────┐
+                    │                 │
+                    ▼                 ▼
+            ┌──────────────┐  ┌──────────────────┐
+            │  单表模式     │  │  多表模式          │
+            │  (无 plan)   │  │  CREATE_PLAN      │
+            └──────┬───────┘  └────────┬─────────┘
+                   │                   │
+                   ▼                   ▼
+          ┌──────────────────┐  ┌──────────────────┐
+  ┌───────│ PHASE_2_SEARCH   │  │    DAG_LOOP      │
+  │       └──────────────────┘  │ ┌──────────────┐ │
+  │ 复用          │ 开发        │ │ 取 ready 任务 │ │
+  ▼               ▼             │ │ 执行 Ph2→5  │ │
+┌──────┐  ┌────────────────┐   │ │ 更新 plan   │ │
+│DONE  │  │ PHASE_3_DDL    │   │ │ ↻ 直到全部   │ │
+│(复用) │  └────────┬───────┘   │ │   completed │ │
+└──────┘           │           │ └──────────────┘ │
+                   ▼           └────────┬─────────┘
+          ┌──────────────────┐          │
+          │ PHASE_4_ETL      │          ▼
+          └────────┬─────────┘  ┌──────────────────┐
+                   │            │  PLAN_COMPLETE    │
+           ┌───────┴───────┐   │  (多表汇总交付)    │
+           │ --review?     │   └──────────────────┘
+           ▼               ▼
+  ┌──────────────┐   (跳过)
+  │PHASE_4.5     │     │
+  │_REVIEW (可选) │     │
+  └──────┬───────┘     │
+         │             │
+         └──────┬──────┘
+                ▼
+          ┌──────────────────┐
+          │ PHASE_5_QA       │
+          └────────┬─────────┘
+                   │
+                   ▼
+          ┌──────────────────┐
+          │    COMPLETE      │
+          │   (单表交付)      │
+          └──────────────────┘
 ```
 
 ---
@@ -379,7 +571,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 | 阶段完成 | 写入内容 | 目标位置 |
 |---------|---------|---------|
-| Phase 1 | 无 | — |
+| Phase 1 | 结构化需求清单 | `docs/wip/req-{table_name}.md` |
 | Phase 2（决定复用） | 记录复用决策 | 决策日志 |
 | Phase 3（DDL 生成） | 表名、粒度、操作类型（新建/扩列） | 表清单 + 决策日志 |
 | Phase 4（ETL 生成） | 新注册的指标 | 决策日志 |
@@ -401,15 +593,24 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 | 源阶段 | 目标阶段 | 传递内容 |
 |--------|----------|---------|
 | Phase 1 → Phase 2 | 指标名称列表、维度列表、建议分层/引擎 |
+| Phase 1 → `docs/wip/` | 结构化需求清单持久化（跨会话载体） |
+| Phase 1 → Phase 4 | 需求清单（指标、维度、业务逻辑描述、数据来源）— 同会话通过上下文传递，跨会话通过 `docs/wip/req-{name}.md` 恢复 |
 | Phase 2 → Phase 3 | 指标复用结果、现有表搜索结果、粒度匹配判断、词根查询结果 |
 | Phase 3 → Phase 4 | 目标表 DDL（含主键、字段列表、COMMENT） |
+| Phase 3 → `docs/wip/` | 更新需求文件中的 `target_table` 为确定表名 |
 | Phase 4 → Phase 4.5 | ETL SQL（可选，--review 时传递） |
+| Phase 4 → `docs/wip/` | 回写已确认的字段映射到需求文件；**任何需求变更（新增/移除源表、调整指标口径、修改维度、补充业务逻辑等）同步更新对应章节** |
 | Phase 4 / 4.5 → Phase 5 | ETL SQL（含源表、加工逻辑）、目标表 DDL |
 | Phase 4 → 指标库 | 新指标注册请求 |
 | Phase 4 → 血缘库 | 表级/字段级血缘关系（自动注册） |
 | Phase 3 → MEMORY.md | 表清单更新（新建/扩列） |
 | Phase 4 → MEMORY.md | 决策日志更新（指标入库） |
+| **任意阶段** → `docs/wip/` | **需求变更即时同步**：任何阶段发生需求变更（新增/移除源表、调整指标口径、修改维度、补充业务逻辑等），必须立即更新 `docs/wip/req-{table_name}.md` 的对应章节，确保 wip 文件始终反映最新需求状态 |
+| Phase 5 → `docs/wip/` | 更新需求文件状态为 `status: done` |
 | 用户反馈 → pitfalls.md | 踩坑记录（源表特性、ETL 错误） |
+| plan 文件 → DAG_LOOP | 拓扑排序、任务状态、依赖关系 |
+| 已完成任务 N 的 DDL → 依赖任务 M 的 Phase 2 | 作为源表元数据（虚拟元数据，表可能尚未在 metastore 中创建） |
+| 动态分解 (Phase 4) → plan 文件 | 新任务节点 + 依赖边 + 当前任务阻塞标记 |
 
 ---
 
@@ -421,7 +622,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 | Phase 2 指标口径冲突 | 询问用户确认：复用/重新开发 |
 | Phase 2 粒度无法确定 | 标记"粒度待确认"，询问用户 |
 | Phase 3 建模冲突 (CASE C) | 询问用户：扩列/新建/其他 |
-| Phase 4 映射关系不明确 | 询问用户确认源字段 |
+| Phase 4 映射关系不明确 | 展示映射草案，要求用户逐项确认/补全，确认无遗漏后继续 |
 | Phase 5 无法匹配 DQC 规则 | 生成通用规则 + 标记待人工补充 |
 
 ---
@@ -466,6 +667,8 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 | `/dw-workflow --step` | 逐步执行，每步确认 |
 | `/dw-workflow --review` | ETL 生成后执行 SQL 审查（Phase 4.5） |
 | `/dw-workflow --dry-run` | 仅分析，不生成文件 |
+| `/dw-workflow --plan` | 强制多表模式，前置规划（即使需求看起来是单表） |
+| `/dw-workflow --resume` | 从已有 plan 文件恢复执行（扫描 `docs/wip/plan-*.md`） |
 
 ---
 
@@ -503,7 +706,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 • search_existing_indicators("放款笔数") → 未找到
 
 [现有表搜索]
-• search_table("loan") → 找到 dm.dmm_sac_loan_chn_daily (渠道维度)
+• search_table("loan") → 找到 ph_sac_dmm.dmm_sac_loan_chn_daily (渠道维度)
 • 粒度对比: 现有表 = (channel_code, stat_date)，需求 = (product_code, stat_date) → 不匹配
 
 [决策] 需要新建表
@@ -518,11 +721,11 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 ═══════════════════════════════════════════════════════════════
 
 [建模决策] CASE B: 新建表
-[表名] dm.dmm_sac_loan_prod_daily
+[表名] ph_sac_dmm.dmm_sac_loan_prod_daily
 [粒度] 一行 = 一天 × 一产品
 
 [DDL]
-CREATE TABLE IF NOT EXISTS dm.dmm_sac_loan_prod_daily (
+CREATE TABLE IF NOT EXISTS ph_sac_dmm.dmm_sac_loan_prod_daily (
     product_code          STRING          COMMENT '产品编码',
     product_name          STRING          COMMENT '产品名称',
     td_sum_loan_amt       DECIMAL(18,2)   COMMENT '当日放款总金额，单位：元',
@@ -562,7 +765,7 @@ agg_prev AS (
     WHERE stat_date = DATE_ADD('${hivevar:stat_date}', -1)
     GROUP BY product_code
 )
-INSERT OVERWRITE TABLE dm.dmm_sac_loan_prod_daily PARTITION (stat_date)
+INSERT OVERWRITE TABLE ph_sac_dmm.dmm_sac_loan_prod_daily PARTITION (stat_date)
 SELECT
     a.product_code,
     dim.product_name,
@@ -583,7 +786,7 @@ LEFT JOIN agg_prev ap ON a.product_code = ap.product_code;
 是否注册为公共指标？[A]全部 / [B]选择 / [C]不注册
 
 [血缘注册] ✓ 自动完成
-• 表级血缘: dm.dmm_sac_loan_prod_daily ← dwd.dwd_loan_detail, dim.dim_product
+• 表级血缘: ph_sac_dmm.dmm_sac_loan_prod_daily ← dwd.dwd_loan_detail, dim.dim_product
 • 字段级血缘: td_sum_loan_amt ← SUM(dwd.dwd_loan_detail.loan_amount)
 
 ═══════════════════════════════════════════════════════════════
@@ -608,9 +811,9 @@ LEFT JOIN agg_prev ap ON a.product_code = ap.product_code;
  交付物汇总
 ═══════════════════════════════════════════════════════════════
 
-✅ dm.dmm_sac_loan_prod_daily_ddl.sql    (DDL)
-✅ dm.dmm_sac_loan_prod_daily_etl.sql    (ETL + 血缘注释)
-✅ dm.dmm_sac_loan_prod_daily_qa.sql     (测试套件)
+✅ ph_sac_dmm.dmm_sac_loan_prod_daily_ddl.sql    (DDL)
+✅ ph_sac_dmm.dmm_sac_loan_prod_daily_etl.sql    (ETL + 血缘注释)
+✅ ph_sac_dmm.dmm_sac_loan_prod_daily_qa.sql     (测试套件)
 ✅ 指标库已更新 (3 条新指标)
 ✅ 血缘库已更新 (2 条表级血缘，5 条字段级血缘)
 

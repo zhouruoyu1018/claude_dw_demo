@@ -51,7 +51,7 @@ PLAN FRAGMENT 2           ← 数据扫描层
 
 ```
 0:OlapScanNode
-   TABLE: dm.dmm_sac_loan_prod_daily
+   TABLE: ph_dm_sac_drs.dmm_sac_loan_prod_daily
    PREAGGREGATION: ON           ← 预聚合是否生效
    partitions=1/30              ← 分区裁剪: 扫描1个/共30个
    rollup: dmm_sac_loan_prod_daily   ← 命中的物化视图
@@ -200,7 +200,7 @@ SELECT
     product_code,
     SUM(loan_amount) AS sum_loan_amt,
     COUNT(loan_id) AS cnt_loan
-FROM dm.dmm_sac_loan_prod_daily
+FROM ph_dm_sac_drs.dmm_sac_loan_prod_daily
 GROUP BY dt, product_code;
 ```
 

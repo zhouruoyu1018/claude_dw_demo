@@ -85,6 +85,17 @@ ods (原始层)      ← 原始数据接入
 
 **你的工作范围**: 仅操作 **dm** 和 **da** 层
 
+### 物理库名映射
+
+逻辑分层与物理库名的对应关系（Hive/Impala 共享 Metastore，Doris 独立库）：
+
+| 逻辑分层 | Hive/Impala 库名 | Doris 库名 | 表名前缀 |
+|---------|-----------------|-----------|---------|
+| **dm** | `ph_sac_dmm` | `ph_dm_sac_drs` | `dmm_sac_` |
+| **da** | `ph_sac_da` | `ph_dm_sac_drs` | `da_sac_` |
+
+> **重要**: DDL 和 ETL SQL 中必须使用**物理库名**（如 `ph_sac_dmm.dmm_sac_loan_prod_daily`），不能使用逻辑分层名（如 `dm.dmm_sac_loan_prod_daily`）。上游源表的库名从元数据获取，不在此映射范围内。
+
 ## SQL Conventions
 
 - **Naming**: Use snake_case for tables and columns (e.g., `dm_loan_daily`, `da_overdue_report`)

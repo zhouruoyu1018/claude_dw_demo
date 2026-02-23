@@ -108,22 +108,22 @@ def insert_test_data():
 
         # 插入表级血缘数据
         table_lineage_data = [
-            # dm.dmm_sac_loan_prod_daily
-            ('dm.dmm_sac_loan_prod_daily', 'dm', 'dwd.dwd_loan_detail', 'dwd', 'ETL', 'FROM',
+            # ph_sac_dmm.dmm_sac_loan_prod_daily
+            ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'ph_sac_dmm', 'dwd.dwd_loan_detail', 'dwd', 'ETL', 'FROM',
              'sql/hive/etl/dm/dmm_sac_loan_prod_daily_etl.sql', '按产品维度聚合当日放款明细', 'test_user'),
-            ('dm.dmm_sac_loan_prod_daily', 'dm', 'dim.dim_product', 'dim', 'ETL', 'LEFT JOIN',
+            ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'ph_sac_dmm', 'dim.dim_product', 'dim', 'ETL', 'LEFT JOIN',
              'sql/hive/etl/dm/dmm_sac_loan_prod_daily_etl.sql', '关联产品维度获取产品名称', 'test_user'),
 
-            # dm.dmm_sac_loan_chn_daily
-            ('dm.dmm_sac_loan_chn_daily', 'dm', 'dwd.dwd_loan_detail', 'dwd', 'ETL', 'FROM',
+            # ph_sac_dmm.dmm_sac_loan_chn_daily
+            ('ph_sac_dmm.dmm_sac_loan_chn_daily', 'ph_sac_dmm', 'dwd.dwd_loan_detail', 'dwd', 'ETL', 'FROM',
              'sql/hive/etl/dm/dmm_sac_loan_chn_daily_etl.sql', '按渠道维度聚合当日放款明细', 'test_user'),
-            ('dm.dmm_sac_loan_chn_daily', 'dm', 'dim.dim_channel', 'dim', 'ETL', 'LEFT JOIN',
+            ('ph_sac_dmm.dmm_sac_loan_chn_daily', 'ph_sac_dmm', 'dim.dim_channel', 'dim', 'ETL', 'LEFT JOIN',
              'sql/hive/etl/dm/dmm_sac_loan_chn_daily_etl.sql', '关联渠道维度获取渠道名称', 'test_user'),
 
-            # da.da_loan_report
-            ('da.da_loan_report', 'da', 'dm.dmm_sac_loan_prod_daily', 'dm', 'ETL', 'FROM',
+            # ph_sac_da.da_loan_report
+            ('ph_sac_da.da_loan_report', 'ph_sac_da', 'ph_sac_dmm.dmm_sac_loan_prod_daily', 'ph_sac_dmm', 'ETL', 'FROM',
              'sql/hive/etl/da/da_loan_report_etl.sql', '汇总产品维度指标到报表层', 'test_user'),
-            ('da.da_loan_report', 'da', 'dm.dmm_sac_loan_chn_daily', 'dm', 'ETL', 'LEFT JOIN',
+            ('ph_sac_da.da_loan_report', 'ph_sac_da', 'ph_sac_dmm.dmm_sac_loan_chn_daily', 'ph_sac_dmm', 'ETL', 'LEFT JOIN',
              'sql/hive/etl/da/da_loan_report_etl.sql', '关联渠道维度指标', 'test_user'),
 
             # dwd.dwd_loan_detail
@@ -148,22 +148,22 @@ def insert_test_data():
 
         # 插入字段级血缘数据
         column_lineage_data = [
-            # dm.dmm_sac_loan_prod_daily
-            ('dm.dmm_sac_loan_prod_daily', 'product_code', 'dwd.dwd_loan_detail', 'product_code', 'DIRECT', 'product_code', 1),
-            ('dm.dmm_sac_loan_prod_daily', 'product_name', 'dim.dim_product', 'product_name', 'DIRECT', 'product_name', 2),
-            ('dm.dmm_sac_loan_prod_daily', 'td_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)', 1),
-            ('dm.dmm_sac_loan_prod_daily', 'td_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)', 1),
-            ('dm.dmm_sac_loan_prod_daily', 'td_diff_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'CUSTOM', 'SUM(loan_amount) - LAG(SUM(loan_amount))', 1),
+            # ph_sac_dmm.dmm_sac_loan_prod_daily
+            ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_code', 'dwd.dwd_loan_detail', 'product_code', 'DIRECT', 'product_code', 1),
+            ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_name', 'dim.dim_product', 'product_name', 'DIRECT', 'product_name', 2),
+            ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)', 1),
+            ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)', 1),
+            ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_diff_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'CUSTOM', 'SUM(loan_amount) - LAG(SUM(loan_amount))', 1),
 
-            # dm.dmm_sac_loan_chn_daily
-            ('dm.dmm_sac_loan_chn_daily', 'channel_code', 'dwd.dwd_loan_detail', 'channel_code', 'DIRECT', 'channel_code', 3),
-            ('dm.dmm_sac_loan_chn_daily', 'channel_name', 'dim.dim_channel', 'channel_name', 'DIRECT', 'channel_name', 4),
-            ('dm.dmm_sac_loan_chn_daily', 'td_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)', 3),
-            ('dm.dmm_sac_loan_chn_daily', 'td_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)', 3),
+            # ph_sac_dmm.dmm_sac_loan_chn_daily
+            ('ph_sac_dmm.dmm_sac_loan_chn_daily', 'channel_code', 'dwd.dwd_loan_detail', 'channel_code', 'DIRECT', 'channel_code', 3),
+            ('ph_sac_dmm.dmm_sac_loan_chn_daily', 'channel_name', 'dim.dim_channel', 'channel_name', 'DIRECT', 'channel_name', 4),
+            ('ph_sac_dmm.dmm_sac_loan_chn_daily', 'td_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)', 3),
+            ('ph_sac_dmm.dmm_sac_loan_chn_daily', 'td_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)', 3),
 
-            # da.da_loan_report
-            ('da.da_loan_report', 'total_loan_amt', 'dm.dmm_sac_loan_prod_daily', 'td_sum_loan_amt', 'SUM', 'SUM(td_sum_loan_amt)', 5),
-            ('da.da_loan_report', 'total_loan_cnt', 'dm.dmm_sac_loan_prod_daily', 'td_cnt_loan', 'SUM', 'SUM(td_cnt_loan)', 5),
+            # ph_sac_da.da_loan_report
+            ('ph_sac_da.da_loan_report', 'total_loan_amt', 'ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_sum_loan_amt', 'SUM', 'SUM(td_sum_loan_amt)', 5),
+            ('ph_sac_da.da_loan_report', 'total_loan_cnt', 'ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_cnt_loan', 'SUM', 'SUM(td_cnt_loan)', 5),
         ]
 
         cursor.executemany("""
@@ -223,8 +223,8 @@ def test_mcp_functions():
 
     # 测试 1: 查询上游依赖
     print("\n--- 测试 search_lineage_upstream ---")
-    print("查询 dm.dmm_sac_loan_prod_daily 的上游依赖:")
-    result = search_lineage_upstream("dm.dmm_sac_loan_prod_daily", depth=1, include_columns=True)
+    print("查询 ph_sac_dmm.dmm_sac_loan_prod_daily 的上游依赖:")
+    result = search_lineage_upstream("ph_sac_dmm.dmm_sac_loan_prod_daily", depth=1, include_columns=True)
     print(f"  上游表数量: {result['total_upstream']}")
     for up in result['upstream_tables']:
         print(f"  • {up['source']} ({up['join_type']}) - {up['logic_summary']}")
