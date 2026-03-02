@@ -454,47 +454,16 @@ Step 8 持久化完成
 
 将复杂需求分解为多个独立任务，每个任务对应一张目标表。
 
-**分解规则**（按优先级）：
+> 本节聚焦”如何从需求分解任务”。Task Registry 字段定义、状态机、DAG 执行、动态分解等完整编排规范见 [multi-table-orchestration.md](../dw-dev-workflow/references/multi-table-orchestration.md)（§7 任务分解规则、§9 职责边界）。
 
-1. **粒度拆分**: 不同粒度 → 不同表/任务
-   - 示例：明细粒度(loan_id) + 日汇总粒度(product_code,stat_date) → 2 个任务
-2. **分层拆分**: dm 中间层 + da 应用层 → 2 个任务，da 依赖 dm
-   - 示例：dm 层指标宽表 + da 层报表导出 → task-1(dm) → task-2(da)
-3. **主题拆分**: 不同业务主题且共享源表 → 并行任务
-   - 示例：放款统计 + 逾期统计（共享 dwd_loan_detail）→ 并行 task-1, task-2
-4. **依赖推断**: 任务 B 的源表 = 任务 A 的目标表 → 添加依赖边 A→B
+**分解规则**（按优先级）：粒度拆分 > 分层拆分 > 主题拆分 > 依赖推断，详见 [multi-table-orchestration.md §7](../dw-dev-workflow/references/multi-table-orchestration.md)。
 
-**输出**:
+**输出契约（供编排层消费）**:
 
-1. 生成 `docs/wip/plan-{project_name}.md`（含 DAG 图 + Task Registry）
-2. 为每个任务生成 `docs/wip/req-{table_name}.md`（含 `plan`、`task_id` 字段）
-3. 展示 DAG 图，询问用户确认任务拆分是否合理
-
-**输出示例**:
-
-```
-═══════════════════════════════════════════════════════════════
- 📋 任务分解结果
-═══════════════════════════════════════════════════════════════
-
-检测到多表需求，已分解为 3 个任务：
-
-DAG:
-  task-1 (dmm_sac_overdue_dtl) ──┐
-                                  ├──→ task-3 (da_sac_overdue_rpt)
-  task-2 (dmm_sac_overdue_prod) ─┘
-
-| task_id | target_table | layer | depends_on |
-|---------|-------------|-------|------------|
-| task-1 | dmm_sac_overdue_dtl | dm | (none) |
-| task-2 | dmm_sac_overdue_prod | dm | (none) |
-| task-3 | da_sac_overdue_rpt | da | task-1, task-2 |
-
-请确认任务拆分是否合理？
-(A) 确认，开始执行
-(B) 调整任务分解
-(C) 改为单表模式
-```
+1. 输出任务草案（task draft）列表，最少包含：`target_table`、`layer`、`depends_on`（可空）、`split_reason`
+2. 为每个草案任务生成/更新 `docs/wip/req-{table_name}.md`
+3. 在 `dw-dev-workflow` 中执行时：由编排层落盘 plan 并分配 `task_id`
+4. 独立执行时：输出建议 DAG，标注为”草案”
 
 **project_name 命名**: 从需求主题推导，snake_case 格式（如 `loan_overdue_report`、`monthly_repay_summary`）。
 

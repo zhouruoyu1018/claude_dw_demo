@@ -32,11 +32,11 @@ class Indicator:
     indicator_english_name: str
     indicator_name: str  # 中文名，需用户确认
     calculation_logic: str
-    standard_type: str  # 金额/数量/比率
+    standard_type: str  # 数值类/日期类/文本类/枚举类/时间类
     indicator_category: str  # 原子指标/派生指标/复合指标
     data_type: str = 'DECIMAL'
     business_domain: str = ''  # 从表名推断
-    update_frequency: str = '日'  # 从分区字段推断
+    update_frequency: str = '每日'  # 从分区字段推断
 
 
 @dataclass
@@ -81,11 +81,11 @@ class SQLParser:
 
     # 标准类型推断规则
     TYPE_INFERENCE = {
-        r'amt|amount|money|price|fee': '金额',
-        r'cnt|count|num|quantity': '数量',
-        r'rate|ratio|percent|pct': '比率',
-        r'date|time|dt': '时间',
-        r'avg|mean': '平均值',
+        r'date|dt|day|month|year': '日期类',
+        r'time|timestamp|ts': '时间类',
+        r'is_|has_|flag|status|type|level|category|mode|state': '枚举类',
+        r'amt|amount|money|price|fee|cnt|count|num|quantity|rate|ratio|percent|pct|avg|sum|max|min|total|score|days': '数值类',
+        r'name|desc|remark|comment|memo|code|id|text|msg|title': '文本类',
     }
 
     # 业务域推断规则（从表名）
@@ -379,7 +379,7 @@ class SQLParser:
                 indicator_category=indicator_category,
                 business_domain=business_domain,
                 data_type=self._infer_data_type(standard_type),
-                update_frequency='日'  # 默认日更新，可根据分区字段调整
+                update_frequency='每日'  # 默认日更新，可根据分区字段调整
             )
             self.result.indicators.append(indicator)
 
@@ -389,7 +389,8 @@ class SQLParser:
         for pattern, type_name in self.TYPE_INFERENCE.items():
             if re.search(pattern, column_lower):
                 return type_name
-        return '数量'  # 默认
+        # 指标字段默认数值类，避免落入无效枚举
+        return '数值类'
 
     def _infer_business_domain(self, table_name: str) -> str:
         """推断业务域"""
@@ -421,12 +422,15 @@ class SQLParser:
     @staticmethod
     def _infer_data_type(standard_type: str) -> str:
         """推断数据类型"""
-        if standard_type in ('金额', '平均值'):
-            return 'DECIMAL(20,2)'
-        elif standard_type in ('数量', '比率'):
-            return 'BIGINT'
-        else:
-            return 'VARCHAR(255)'
+        if standard_type == '数值类':
+            return 'DECIMAL'
+        if standard_type == '日期类':
+            return 'DATE'
+        if standard_type == '时间类':
+            return 'TIMESTAMP'
+        if standard_type in ('文本类', '枚举类'):
+            return 'VARCHAR'
+        return 'VARCHAR'
 
     def _generate_summary(self):
         """生成 ETL 逻辑摘要"""

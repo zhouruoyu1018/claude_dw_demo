@@ -140,139 +140,15 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 当需求涉及多张表（链式依赖、扇出型、混合 DAG）时，工作流自动从单表线性模式升级为多表 DAG 模式。单表需求不受影响。
 
-### 模式检测
+> **规范详情**: Task Registry 字段定义、状态机、DAG 执行循环、动态分解、跨会话恢复等完整规范见 [references/multi-table-orchestration.md](references/multi-table-orchestration.md)。
 
-Phase 1（需求拆解）完成后，检查 `dw-requirement-triage` 的输出：
+### 快速参考
 
-```
-Phase 1 输出
-    ↓
-┌──────────────────┐
-│ 复杂度检测        │
-│ (Step 8.1 判定)  │
-└────────┬─────────┘
-    ├─ 单表 → 走现有线性流程（无 plan 文件，行为不变）
-    └─ 多表 → 创建 plan 文件 → 进入 DAG 执行循环
-```
-
-- **单表**: Phase 1 仅输出一个 `req-{table}.md` → 直接走 Phase 2→3→4→[4.5]→5
-- **多表**: Phase 1 输出 `plan-{project_name}.md` + 多个 `req-{table}.md` → 进入 DAG 循环
-
-### Task Plan 文件
-
-多表模式的编排载体为 `docs/wip/plan-{project_name}.md`，协调多个 `req-{table}.md` 文件。
-
-**文件格式**:
-
-```markdown
----
-status: active          # active | completed | aborted
-created: 2026-02-18
-project_name: loan_overdue_report
-total_tasks: 3
-completed_tasks: 1
----
-
-# Task Plan: loan_overdue_report
-
-## DAG
-
-` ` `
-task-1 (dmm_sac_overdue_dtl) ──┐
-                                ├──→ task-3 (da_sac_overdue_rpt)
-task-2 (dmm_sac_overdue_prod) ─┘
-` ` `
-
-## Task Registry
-
-| task_id | target_table | layer | depends_on | status | phase | req_file | created_by |
-|---------|-------------|-------|------------|--------|-------|----------|------------|
-| task-1 | dmm_sac_overdue_dtl | dm | (none) | completed | done | req-dmm_sac_overdue_dtl.md | phase1 |
-| task-2 | dmm_sac_overdue_prod | dm | (none) | in_progress | phase4_etl | req-dmm_sac_overdue_prod.md | phase1 |
-| task-3 | da_sac_overdue_rpt | da | task-1,task-2 | blocked | pending | req-da_sac_overdue_rpt.md | phase1 |
-
-## Execution Log
-
-| timestamp | task_id | event | detail |
-|-----------|---------|-------|--------|
-| 2026-02-18 10:00 | task-1 | completed | All deliverables generated |
-| 2026-02-18 10:10 | task-2 | phase4_start | ETL generation started |
-```
-
-### 单表 req 文件扩展
-
-多表模式下，每个 req 文件的 front matter 新增可选字段（单表模式不写，无破坏）：
-
-```yaml
----
-status: wip
-target_table: dmm_sac_overdue_dtl
-plan: plan-loan_overdue_report    # 关联的 plan 文件（可选）
-task_id: task-1                    # 在 plan 中的任务 ID（可选）
-phase_progress: phase4_etl:step2.5 # 最后完成的步骤（可选，用于跨会话恢复）
----
-```
-
-### DAG 执行循环
-
-替代线性状态机，多表模式的核心调度逻辑：
-
-```
-DAG_LOOP:
-  1. 扫描 plan，将所有依赖已完成的 blocked 任务标记为 ready
-  2. 从 ready 中取 task_id 最小的任务
-  3. 对该任务执行 Phase 2→3→4→[4.5]→5（复用现有单表逻辑）
-  4. 完成后更新 plan（status=completed），回到 1
-  5. 所有任务 completed → plan.status=completed，输出汇总
-
-  异常处理:
-  - 无 ready 任务但有未完成任务 → 循环依赖，报错让用户修正 plan
-  - Phase 4 中用户请求拆分 → 触发动态分解（见 generate-etl-sql Step 0.6）
-```
-
-**每个任务完成后的 checkpoint**:
-
-```
-═══════════════════════════════════════════════════════════════
- ✅ task-1 (dmm_sac_overdue_dtl) 完成
-═══════════════════════════════════════════════════════════════
-
-进度: [██████░░░░] 1/3 任务完成
-
-下一个: task-2 (dmm_sac_overdue_prod) — 状态: ready
-等待中: task-3 (da_sac_overdue_rpt) — 阻塞于: task-2
-
-是否继续执行 task-2？[Y/n]
-```
-
-### 跨会话恢复
-
-当使用 `/dw-workflow --resume` 或新会话需要恢复中断的多表流程时：
-
-**恢复协议**:
-
-1. 扫描 `docs/wip/plan-*.md`（`status: active`）
-2. 多个活跃 plan 则列出让用户选择
-3. 解析 Task Registry，展示进度仪表盘：
-
-```
-═══════════════════════════════════════════════════════════════
- 📋 恢复 Plan: loan_overdue_report
-═══════════════════════════════════════════════════════════════
-
-| task_id | target_table | status | phase |
-|---------|-------------|--------|-------|
-| task-1 | dmm_sac_overdue_dtl | ✅ completed | done |
-| task-2 | dmm_sac_overdue_prod | 🔄 in_progress | phase4_etl |
-| task-3 | da_sac_overdue_rpt | ⏳ blocked | pending |
-
-进度: [██████░░░░] 1/3 完成
-
-恢复 task-2，从 phase4_etl 继续...
-```
-
-4. 定位 `in_progress` 任务，读其 req 文件的 `phase_progress` 恢复断点
-5. 未找到 `phase_progress` 则从该任务的 Phase 2 开始
+- **模式检测**: Phase 1 Step 8.1 输出 → 任务数=1 走单表，>1 创建 plan 进入 DAG
+- **Plan 文件**: `docs/wip/plan-{project_name}.md`（YAML front matter + DAG 图 + Task Registry）
+- **DAG 执行**: 扫描依赖 → 取 ready 中最小 task_id → 执行 Phase 2→3→4→[4.5]→5 → 更新 plan → 循环
+- **动态分解**: Phase 4 中用户要求拆表 → 暂停 + 分解请求 → 新任务完成后恢复
+- **跨会话恢复**: 扫描 `docs/wip/plan-*.md` → 展示进度 → 从 `phase_progress` 断点继续
 
 ---
 
@@ -674,151 +550,13 @@ DAG_LOOP:
 
 ## 完整示例
 
-**用户输入**:
-```
-需求: 运营需要一张放款产品日报表，统计每日各产品的放款金额、放款笔数，
-     支持查看日环比变化。数据 T+1 更新即可。
-```
+完整执行示例已下沉到参考文件，包含：
 
-**工作流执行**:
+- 单表模式 5 阶段执行轨迹
+- 多表模式触发与编排衔接
+- 典型交付物清单
 
-```
-═══════════════════════════════════════════════════════════════
- Phase 1: 需求拆解 (dw-requirement-triage)
-═══════════════════════════════════════════════════════════════
-
-[分析结果]
-• 需求类型: 聚合统计
-• 指标: 放款金额(SUM), 放款笔数(COUNT), 日环比(LAG)
-• 维度: 产品编码, 数据日期
-• 时间粒度: 日
-• 建议分层: dm (可复用的指标宽表)
-• 建议引擎: Hive (T+1 批处理)
-
-请确认是否正确？[Y/n]
-
-═══════════════════════════════════════════════════════════════
- Phase 2: 复用检索 (search-hive-metadata)
-═══════════════════════════════════════════════════════════════
-
-[指标库查询]
-• search_existing_indicators("放款金额") → 未找到完全匹配
-• search_existing_indicators("放款笔数") → 未找到
-
-[现有表搜索]
-• search_table("loan") → 找到 ph_sac_dmm.dmm_sac_loan_chn_daily (渠道维度)
-• 粒度对比: 现有表 = (channel_code, stat_date)，需求 = (product_code, stat_date) → 不匹配
-
-[决策] 需要新建表
-
-[词根查询]
-• search_word_root("放款") → loan
-• search_word_root("金额") → amt
-• search_word_root("笔数") → cnt
-
-═══════════════════════════════════════════════════════════════
- Phase 3: 模型设计 (generate-standard-ddl)
-═══════════════════════════════════════════════════════════════
-
-[建模决策] CASE B: 新建表
-[表名] ph_sac_dmm.dmm_sac_loan_prod_daily
-[粒度] 一行 = 一天 × 一产品
-
-[DDL]
-CREATE TABLE IF NOT EXISTS ph_sac_dmm.dmm_sac_loan_prod_daily (
-    product_code          STRING          COMMENT '产品编码',
-    product_name          STRING          COMMENT '产品名称',
-    td_sum_loan_amt       DECIMAL(18,2)   COMMENT '当日放款总金额，单位：元',
-    td_cnt_loan           BIGINT          COMMENT '当日放款笔数',
-    td_diff_loan_amt      DECIMAL(18,2)   COMMENT '放款金额日环比差值'
-)
-COMMENT '贷款产品日维度指标宽表 [粒度：产品编码，数据日期]'
-PARTITIONED BY (stat_date STRING COMMENT '数据日期')
-STORED AS ORC
-TBLPROPERTIES (
-    'orc.compress' = 'SNAPPY',
-    'logical_primary_key' = 'product_code,stat_date'
-);
-
-DDL 是否符合预期？[Y/n]
-
-═══════════════════════════════════════════════════════════════
- Phase 4: ETL 开发 (generate-etl-sql)
-═══════════════════════════════════════════════════════════════
-
-[加工模式] 混合模式 (聚合 + 窗口函数)
-[源表] dwd.dwd_loan_detail, dim.dim_product
-
-[ETL SQL]
-WITH agg AS (
-    SELECT product_code,
-           SUM(loan_amount) AS td_sum_loan_amt,
-           COUNT(loan_id)   AS td_cnt_loan
-    FROM dwd.dwd_loan_detail
-    WHERE stat_date = '${hivevar:stat_date}'
-    GROUP BY product_code
-),
-agg_prev AS (
-    SELECT product_code,
-           SUM(loan_amount) AS yd_sum_loan_amt
-    FROM dwd.dwd_loan_detail
-    WHERE stat_date = DATE_ADD('${hivevar:stat_date}', -1)
-    GROUP BY product_code
-)
-INSERT OVERWRITE TABLE ph_sac_dmm.dmm_sac_loan_prod_daily PARTITION (stat_date)
-SELECT
-    a.product_code,
-    dim.product_name,
-    a.td_sum_loan_amt,
-    a.td_cnt_loan,
-    a.td_sum_loan_amt - COALESCE(ap.yd_sum_loan_amt, 0) AS td_diff_loan_amt,
-    '${hivevar:stat_date}' AS stat_date
-FROM agg a
-LEFT JOIN dim.dim_product dim ON a.product_code = dim.product_code
-LEFT JOIN agg_prev ap ON a.product_code = ap.product_code;
-
-[新指标入库]
-发现 3 个新指标尚未入库：
-1. 当日放款金额 (td_sum_loan_amt)
-2. 当日放款笔数 (td_cnt_loan)
-3. 放款金额日环比 (td_diff_loan_amt)
-
-是否注册为公共指标？[A]全部 / [B]选择 / [C]不注册
-
-[血缘注册] ✓ 自动完成
-• 表级血缘: ph_sac_dmm.dmm_sac_loan_prod_daily ← dwd.dwd_loan_detail, dim.dim_product
-• 字段级血缘: td_sum_loan_amt ← SUM(dwd.dwd_loan_detail.loan_amount)
-
-═══════════════════════════════════════════════════════════════
- Phase 5: 测试套件 (generate-qa-suite)
-═══════════════════════════════════════════════════════════════
-
-[冒烟测试]
-• S-01: 目标表行数 > 0
-• S-02: 源表 vs 目标表行数对比
-• S-03: 主键唯一性 (product_code, stat_date)
-• S-04: 关键字段非 NULL
-• S-05: 数据样本抽查 (LIMIT 20)
-
-[DQC 规则]
-• DQC-C02: product_code 非 NULL
-• DQC-U01: 主键唯一
-• DQC-V01: td_sum_loan_amt >= 0
-• DQC-V04: td_cnt_loan >= 0
-• DQC-VOL01: 行数波动检查
-
-═══════════════════════════════════════════════════════════════
- 交付物汇总
-═══════════════════════════════════════════════════════════════
-
-✅ ph_sac_dmm.dmm_sac_loan_prod_daily_ddl.sql    (DDL)
-✅ ph_sac_dmm.dmm_sac_loan_prod_daily_etl.sql    (ETL + 血缘注释)
-✅ ph_sac_dmm.dmm_sac_loan_prod_daily_qa.sql     (测试套件)
-✅ 指标库已更新 (3 条新指标)
-✅ 血缘库已更新 (2 条表级血缘，5 条字段级血缘)
-
-流程完成！
-```
+见 [references/workflow-e2e-example.md](references/workflow-e2e-example.md)。
 
 ---
 
@@ -854,3 +592,8 @@ LEFT JOIN agg_prev ap ON a.product_code = ap.product_code;
 - `generate-etl-sql.skill`
 - `review-sql` (可选，Phase 4.5 审查)
 - `generate-qa-suite.skill`
+
+## References
+
+- [references/multi-table-orchestration.md](references/multi-table-orchestration.md) - 多表编排规范（Task Registry、状态机、DAG 执行、动态分解）
+- [references/workflow-e2e-example.md](references/workflow-e2e-example.md) - 端到端执行示例（单表/多表）

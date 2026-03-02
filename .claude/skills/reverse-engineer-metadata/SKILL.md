@@ -1,3 +1,8 @@
+---
+name: reverse-engineer-metadata
+description: 从存量 SQL 脚本逆向提取表级/字段级血缘与指标定义，支持批量扫描、用户确认和批量入库。使用场景：(1) 接手遗留数仓项目补齐元数据 (2) 元数据库缺失时从 ETL 代码反推血缘 (3) 数据治理时批量盘点历史指标资产
+---
+
 # reverse-engineer-metadata
 
 **逆向工程：从存量 SQL 脚本提取指标和血缘**

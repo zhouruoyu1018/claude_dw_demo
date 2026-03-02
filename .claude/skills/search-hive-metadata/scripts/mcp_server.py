@@ -99,6 +99,10 @@ def get_pg_connection():
     return psycopg2.connect(**config)
 
 
+WORD_ROOT_TAG_ORDER = ["BOOL", "TIME", "CONVERGE", "BIZ_ENTITY", "CATEGORY_WORD"]
+WORD_ROOT_TAG_RANK = {tag: idx for idx, tag in enumerate(WORD_ROOT_TAG_ORDER)}
+
+
 # ============== 搜索功能 ==============
 
 def search_table(keyword: str, schema_name: str = None, limit: int = 10) -> list[dict]:
@@ -382,7 +386,12 @@ def list_columns(table_name_full: str) -> list[dict]:
         conn.close()
 
 
-def search_word_root(keyword: str, tag: str = None, limit: int = 20) -> list[dict]:
+def search_word_root(
+    keyword: str,
+    tag: str = None,
+    limit: int = 20,
+    match_mode: str = "exact_first"
+) -> list[dict]:
     """
     搜索词根表，获取标准词根用于字段命名（从 PostgreSQL 查询）
 
@@ -390,6 +399,9 @@ def search_word_root(keyword: str, tag: str = None, limit: int = 20) -> list[dic
         keyword: 搜索关键词，支持中文业务含义或英文词根
         tag: 词根分类标签筛选（可选），如 'BIZ_ENTITY', 'CATEGORY_WORD'
         limit: 返回结果数量
+        match_mode: 匹配模式:
+            - exact_first: 精确/前缀匹配优先（默认）
+            - fuzzy_only: 仅按字典序返回（保留 score/match_level 供参考）
 
     Returns:
         匹配的词根列表，每条包含:
@@ -398,7 +410,202 @@ def search_word_root(keyword: str, tag: str = None, limit: int = 20) -> list[dic
         - english_name: 英文全称
         - alias: 别名
         - tag: 分类标签
+        - match_level: 匹配层级（exact/prefix/fuzzy/prefetch）
+        - score: 匹配评分（exact_first 模式用于排序）
     """
+    conn = get_pg_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        keyword = (keyword or "").strip()
+        match_mode = (match_mode or "exact_first").strip().lower()
+        if match_mode not in {"exact_first", "fuzzy_only"}:
+            match_mode = "exact_first"
+
+        if keyword == "":
+            # 批量预取场景：按 tag 浏览全部词根
+            sql = """
+                SELECT
+                    english_abbr,
+                    chinese_name,
+                    english_name,
+                    alias,
+                    tag,
+                    'prefetch'::text AS match_level,
+                    0::int AS score
+                FROM word_root_dict
+                WHERE 1 = 1
+            """
+            params = []
+
+            if tag:
+                sql += " AND tag = %s"
+                params.append(tag)
+
+            sql += " ORDER BY english_abbr LIMIT %s"
+            params.append(limit)
+            cursor.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+        kw_prefix = f"{keyword}%"
+        kw_contains = f"%{keyword}%"
+
+        sql = """
+            SELECT
+                english_abbr,
+                chinese_name,
+                english_name,
+                alias,
+                tag,
+                CASE
+                    WHEN lower(english_abbr) = lower(%s) THEN 100
+                    WHEN chinese_name = %s THEN 98
+                    WHEN lower(english_name) = lower(%s) THEN 96
+                    WHEN lower(alias) = lower(%s) THEN 94
+                    WHEN lower(english_abbr) LIKE lower(%s) THEN 90
+                    WHEN lower(english_name) LIKE lower(%s) THEN 88
+                    WHEN lower(alias) LIKE lower(%s) THEN 86
+                    WHEN chinese_name LIKE %s THEN 84
+                    WHEN lower(english_abbr) LIKE lower(%s) THEN 78
+                    WHEN lower(english_name) LIKE lower(%s) THEN 76
+                    WHEN lower(alias) LIKE lower(%s) THEN 74
+                    WHEN chinese_name LIKE %s THEN 72
+                    ELSE 0
+                END AS score,
+                CASE
+                    WHEN lower(english_abbr) = lower(%s)
+                      OR chinese_name = %s
+                      OR lower(english_name) = lower(%s)
+                      OR lower(alias) = lower(%s)
+                    THEN 'exact'
+                    WHEN lower(english_abbr) LIKE lower(%s)
+                      OR lower(english_name) LIKE lower(%s)
+                      OR lower(alias) LIKE lower(%s)
+                      OR chinese_name LIKE %s
+                    THEN 'prefix'
+                    ELSE 'fuzzy'
+                END AS match_level
+            FROM word_root_dict
+            WHERE (
+                chinese_name LIKE %s
+                OR lower(alias) LIKE lower(%s)
+                OR lower(english_name) LIKE lower(%s)
+                OR lower(english_abbr) LIKE lower(%s)
+            )
+        """
+        params = [
+            keyword, keyword, keyword, keyword,           # exact match
+            kw_prefix, kw_prefix, kw_prefix, kw_prefix,   # prefix match
+            kw_contains, kw_contains, kw_contains, kw_contains,  # fuzzy match
+            keyword, keyword, keyword, keyword,           # match_level exact
+            kw_prefix, kw_prefix, kw_prefix, kw_prefix,   # match_level prefix
+            kw_contains, kw_contains, kw_contains, kw_contains  # where filter
+        ]
+
+        if tag:
+            sql += " AND tag = %s"
+            params.append(tag)
+
+        if match_mode == "fuzzy_only":
+            sql += " ORDER BY english_abbr LIMIT %s"
+        else:
+            sql += " ORDER BY score DESC, english_abbr LIMIT %s"
+        params.append(limit)
+
+        cursor.execute(sql, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def validate_field_name(
+    field_name: str,
+    expected_units: list[dict] = None,
+    allow_same_tag_multi: bool = True
+) -> dict:
+    """
+    校验字段名是否完全由词根表拼接而成，并验证 tag 顺序和语义覆盖。
+
+    Args:
+        field_name: 待校验字段名，如 td_sum_loan_amt
+        expected_units: 可选的期望语义单元列表，每项可包含:
+            - semantic_unit: 语义单元中文
+            - english_abbr / selected_root / root: 选中的词根缩写
+            - tag / selected_tag: 期望 tag
+        allow_same_tag_multi: 是否允许同一 tag 出现多个词根
+
+    Returns:
+        校验结果 dict:
+        - is_valid: 是否通过
+        - tokens: 拆分后的词根详情
+        - violations: 违规列表
+    """
+    field_name = (field_name or "").strip()
+    segments = [part.strip().lower() for part in field_name.split("_") if part.strip()]
+
+    violations = []
+    if not segments:
+        return {
+            "field_name": field_name,
+            "is_valid": False,
+            "canonical_tag_order": WORD_ROOT_TAG_ORDER,
+            "tokens": [],
+            "violations": [
+                {
+                    "type": "empty_field_name",
+                    "message": "字段名为空，无法校验"
+                }
+            ]
+        }
+
+    # 规范化 expected_units
+    normalized_units = []
+    for idx, unit in enumerate(expected_units or []):
+        if not isinstance(unit, dict):
+            violations.append({
+                "type": "invalid_expected_unit",
+                "message": f"expected_units[{idx}] 不是对象",
+                "position": idx + 1
+            })
+            continue
+
+        abbr = (
+            unit.get("english_abbr")
+            or unit.get("selected_root")
+            or unit.get("root")
+            or ""
+        )
+        abbr = str(abbr).strip().lower()
+        tag = str(unit.get("tag") or unit.get("selected_tag") or "").strip().upper()
+        semantic_unit = str(unit.get("semantic_unit") or unit.get("unit") or "").strip()
+
+        normalized_units.append({
+            "position": idx + 1,
+            "semantic_unit": semantic_unit,
+            "english_abbr": abbr,
+            "tag": tag
+        })
+
+    expected_by_abbr = {}
+    for unit in normalized_units:
+        abbr = unit.get("english_abbr")
+        if abbr:
+            expected_by_abbr.setdefault(abbr, []).append(unit)
+        else:
+            violations.append({
+                "type": "missing_expected_abbr",
+                "message": f"expected_units[{unit['position']}] 缺少 english_abbr"
+            })
+
+    # 生成所有可能的复合词根候选（最多连续 3 段）
+    MAX_COMPOUND = 3
+    candidates = set()
+    for i in range(len(segments)):
+        for length in range(1, min(MAX_COMPOUND, len(segments) - i) + 1):
+            candidates.add("_".join(segments[i:i + length]))
+
     conn = get_pg_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -411,27 +618,196 @@ def search_word_root(keyword: str, tag: str = None, limit: int = 20) -> list[dic
                 alias,
                 tag
             FROM word_root_dict
-            WHERE (chinese_name LIKE %s
-               OR alias LIKE %s
-               OR english_name LIKE %s
-               OR english_abbr LIKE %s)
+            WHERE lower(english_abbr) = ANY(%s)
+            ORDER BY english_abbr, tag
         """
-        kw = f"%{keyword}%"
-        params = [kw, kw, kw, kw]
-
-        if tag:
-            sql += " AND tag = %s"
-            params.append(tag)
-
-        sql += " ORDER BY english_abbr LIMIT %s"
-        params.append(limit)
-
-        cursor.execute(sql, params)
-        return [dict(row) for row in cursor.fetchall()]
-
+        cursor.execute(sql, (list(candidates),))
+        rows = [dict(row) for row in cursor.fetchall()]
     finally:
         cursor.close()
         conn.close()
+
+    root_map = {}
+    for row in rows:
+        key = str(row.get("english_abbr") or "").strip().lower()
+        root_map.setdefault(key, []).append(row)
+
+    # 贪心最长匹配：将 segments 合并为最终 tokens
+    tokens = []
+    i = 0
+    while i < len(segments):
+        matched = False
+        for length in range(min(MAX_COMPOUND, len(segments) - i), 0, -1):
+            compound = "_".join(segments[i:i + length])
+            if compound in root_map:
+                tokens.append(compound)
+                i += length
+                matched = True
+                break
+        if not matched:
+            tokens.append(segments[i])
+            i += 1
+
+    token_details = []
+    token_positions = {}
+    previous_rank = -1
+    tag_counts = {}
+
+    for idx, token in enumerate(tokens):
+        token_positions.setdefault(token, []).append(idx + 1)
+        candidates = root_map.get(token, [])
+
+        if not candidates:
+            token_details.append({
+                "position": idx + 1,
+                "token": token,
+                "status": "missing",
+                "tag": None
+            })
+            violations.append({
+                "type": "token_not_found",
+                "token": token,
+                "position": idx + 1,
+                "message": f"词根 `{token}` 不存在于 word_root_dict"
+            })
+            continue
+
+        expected_candidates = expected_by_abbr.get(token, [])
+        expected_tag = next(
+            (item.get("tag") for item in expected_candidates if item.get("tag")),
+            ""
+        )
+
+        chosen = None
+        if expected_tag:
+            filtered = [row for row in candidates if row.get("tag") == expected_tag]
+            if filtered:
+                chosen = filtered[0]
+            else:
+                violations.append({
+                    "type": "expected_tag_mismatch",
+                    "token": token,
+                    "expected_tag": expected_tag,
+                    "actual_tags": sorted({row.get("tag") for row in candidates if row.get("tag")}),
+                    "position": idx + 1,
+                    "message": f"词根 `{token}` 的 tag 与命名证据不一致"
+                })
+
+        if chosen is None:
+            unique_tags = sorted({row.get("tag") for row in candidates if row.get("tag")})
+            if len(unique_tags) > 1:
+                violations.append({
+                    "type": "ambiguous_token_tag",
+                    "token": token,
+                    "candidate_tags": unique_tags,
+                    "position": idx + 1,
+                    "message": f"词根 `{token}` 存在多个 tag，请在 expected_units 指定 tag"
+                })
+                chosen = candidates[0]
+            else:
+                chosen = candidates[0]
+
+        chosen_tag = chosen.get("tag")
+        token_details.append({
+            "position": idx + 1,
+            "token": token,
+            "status": "ok",
+            "tag": chosen_tag,
+            "chinese_name": chosen.get("chinese_name"),
+            "english_name": chosen.get("english_name")
+        })
+
+        tag_counts[chosen_tag] = tag_counts.get(chosen_tag, 0) + 1
+        current_rank = WORD_ROOT_TAG_RANK.get(chosen_tag)
+        if current_rank is None:
+            violations.append({
+                "type": "unknown_tag",
+                "token": token,
+                "tag": chosen_tag,
+                "position": idx + 1,
+                "message": f"词根 `{token}` 的 tag `{chosen_tag}` 不在规范顺序中"
+            })
+            continue
+
+        if current_rank < previous_rank:
+            violations.append({
+                "type": "tag_order_violation",
+                "token": token,
+                "tag": chosen_tag,
+                "position": idx + 1,
+                "message": (
+                    f"字段 `{field_name}` 的 tag 顺序违规："
+                    f"必须遵循 {' -> '.join(WORD_ROOT_TAG_ORDER)}"
+                )
+            })
+        previous_rank = current_rank
+
+    if not allow_same_tag_multi:
+        for tag_name, count in tag_counts.items():
+            if count > 1:
+                violations.append({
+                    "type": "duplicate_tag_not_allowed",
+                    "tag": tag_name,
+                    "count": count,
+                    "message": f"tag `{tag_name}` 出现 {count} 次，不满足 allow_same_tag_multi=false"
+                })
+
+    # 期望语义单元覆盖校验（顺序 + 覆盖）
+    expected_checks = []
+    last_pos = 0
+    for unit in normalized_units:
+        abbr = unit.get("english_abbr")
+        if not abbr:
+            continue
+
+        positions = token_positions.get(abbr, [])
+        next_pos = next((pos for pos in positions if pos > last_pos), None)
+        unit_result = {
+            "position": unit["position"],
+            "semantic_unit": unit.get("semantic_unit"),
+            "english_abbr": abbr,
+            "expected_tag": unit.get("tag") or None,
+            "matched": next_pos is not None,
+            "matched_position": next_pos
+        }
+
+        if next_pos is None:
+            violations.append({
+                "type": "expected_unit_missing",
+                "semantic_unit": unit.get("semantic_unit"),
+                "english_abbr": abbr,
+                "message": f"命名证据中的词根 `{abbr}` 未出现在字段名中"
+            })
+        else:
+            last_pos = next_pos
+            if unit.get("tag"):
+                actual_tag = next(
+                    (
+                        item.get("tag")
+                        for item in token_details
+                        if item.get("token") == abbr and item.get("position") == next_pos
+                    ),
+                    None
+                )
+                if actual_tag != unit["tag"]:
+                    violations.append({
+                        "type": "expected_unit_tag_mismatch",
+                        "semantic_unit": unit.get("semantic_unit"),
+                        "english_abbr": abbr,
+                        "expected_tag": unit["tag"],
+                        "actual_tag": actual_tag,
+                        "message": f"命名证据中 `{abbr}` 的 tag 与词根表不一致"
+                    })
+        expected_checks.append(unit_result)
+
+    return {
+        "field_name": field_name,
+        "is_valid": len(violations) == 0,
+        "canonical_tag_order": WORD_ROOT_TAG_ORDER,
+        "tokens": token_details,
+        "expected_units_check": expected_checks,
+        "violations": violations
+    }
 
 
 def search_existing_indicators(metric_name: str, limit: int = 10) -> list[dict]:
@@ -1399,7 +1775,14 @@ async def list_tools() -> list[Tool]:
                     },
                     "tag": {
                         "type": "string",
-                        "description": "词根分类标签筛选（可选），如 'BIZ_ENTITY'(业务实体)、'CATEGORY_WORD'(分类词)"
+                        "enum": ["BOOL", "TIME", "CONVERGE", "BIZ_ENTITY", "CATEGORY_WORD"],
+                        "description": "词根分类标签筛选（可选）"
+                    },
+                    "match_mode": {
+                        "type": "string",
+                        "enum": ["exact_first", "fuzzy_only"],
+                        "description": "排序模式：exact_first(默认，精确匹配优先) / fuzzy_only(按字典序)",
+                        "default": "exact_first"
                     },
                     "limit": {
                         "type": "integer",
@@ -1408,6 +1791,48 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["keyword"]
+            }
+        ),
+        Tool(
+            name="validate_field_name",
+            description="校验字段名是否严格基于词根表拼接，检查词根存在性、tag 顺序以及与命名证据表的一致性。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "field_name": {
+                        "type": "string",
+                        "description": "待校验字段名，如 'td_sum_loan_amt'"
+                    },
+                    "expected_units": {
+                        "type": "array",
+                        "description": "可选。命名证据表中的语义单元列表，用于校验覆盖率和 tag 一致性",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "semantic_unit": {
+                                    "type": "string",
+                                    "description": "最小语义单元中文，如 '放款'"
+                                },
+                                "english_abbr": {
+                                    "type": "string",
+                                    "description": "选中的词根缩写，如 'loan'"
+                                },
+                                "tag": {
+                                    "type": "string",
+                                    "enum": ["BOOL", "TIME", "CONVERGE", "BIZ_ENTITY", "CATEGORY_WORD"],
+                                    "description": "期望 tag（建议传入）"
+                                }
+                            },
+                            "required": ["english_abbr"]
+                        }
+                    },
+                    "allow_same_tag_multi": {
+                        "type": "boolean",
+                        "description": "是否允许同一 tag 出现多个词根，默认 true",
+                        "default": True
+                    }
+                },
+                "required": ["field_name"]
             }
         ),
         Tool(
@@ -1843,25 +2268,86 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             results = search_word_root(
                 keyword=arguments["keyword"],
                 tag=arguments.get("tag"),
-                limit=arguments.get("limit", 20)
+                limit=arguments.get("limit", 20),
+                match_mode=arguments.get("match_mode", "exact_first")
             )
 
             if not results:
                 return [TextContent(
                     type="text",
                     text=f"## 词根查询: \"{arguments['keyword']}\"\n\n"
-                         f"未找到匹配的词根。请尝试其他关键词，或使用通用英文缩写并在 COMMENT 中标注'（新词根，待入库）'。"
+                         "未找到匹配的词根。请改用更小语义单元继续查询；若仍无结果，应先登记新词根后再生成 DDL。"
                 )]
 
             output = f"## 词根查询: \"{arguments['keyword']}\"\n\n"
             output += f"找到 {len(results)} 个匹配词根:\n\n"
-            output += "| 缩写(用于命名) | 中文名 | 英文全称 | 别名 | 分类标签 |\n"
-            output += "|---------------|--------|---------|------|----------|\n"
+            output += "| 缩写(用于命名) | 中文名 | 英文全称 | 别名 | 分类标签 | 匹配层级 | 评分 |\n"
+            output += "|---------------|--------|---------|------|----------|----------|------|\n"
 
             for row in results:
-                output += f"| `{row.get('english_abbr', '-')}` | {row.get('chinese_name', '-')} | {row.get('english_name', '-')} | {row.get('alias', '-') or '-'} | {row.get('tag', '-')} |\n"
+                abbr = str(row.get("english_abbr", "-")).replace("|", "\\|")
+                cn = str(row.get("chinese_name", "-") or "-").replace("|", "\\|")
+                en = str(row.get("english_name", "-") or "-").replace("|", "\\|")
+                alias = str(row.get("alias", "-") or "-").replace("|", "\\|")
+                tag = str(row.get("tag", "-") or "-").replace("|", "\\|")
+                match_level = str(row.get("match_level", "-") or "-").replace("|", "\\|")
+                score = row.get("score", "-")
+                output += (
+                    f"| `{abbr}` | {cn} | {en} | {alias} | {tag} | {match_level} | {score} |\n"
+                )
 
-            output += "\n**使用方式**: 用 `缩写` 列的值按 `{布尔}_{时间}_{聚合}_{业务主题}_{分类}` 顺序组装字段名。\n"
+            output += "\n**命名约束**:\n"
+            output += "- 仅可使用查询结果中的 `缩写` 与 `分类标签`\n"
+            output += "- 必须按 `BOOL -> TIME -> CONVERGE -> BIZ_ENTITY -> CATEGORY_WORD` 组装\n"
+            output += "- 不得凭语义猜测 tag；优先选择 `match_level=exact` 且 `score` 更高的词根\n"
+
+            return [TextContent(type="text", text=output)]
+
+        elif name == "validate_field_name":
+            result = validate_field_name(
+                field_name=arguments["field_name"],
+                expected_units=arguments.get("expected_units"),
+                allow_same_tag_multi=arguments.get("allow_same_tag_multi", True)
+            )
+
+            output = f"## 字段名校验: `{result['field_name']}`\n\n"
+            output += f"- **校验结果**: {'✅ 通过' if result['is_valid'] else '❌ 不通过'}\n"
+            output += f"- **标准 tag 顺序**: {' -> '.join(result['canonical_tag_order'])}\n\n"
+
+            output += "### 拆解结果\n\n"
+            output += "| 位置 | 词根 | tag | 中文名 | 状态 |\n"
+            output += "|------|------|-----|--------|------|\n"
+            for item in result.get("tokens", []):
+                status = "已命中" if item.get("status") == "ok" else "未命中"
+                output += (
+                    f"| {item.get('position', '-')} | `{item.get('token', '-')}` | "
+                    f"{item.get('tag') or '-'} | {item.get('chinese_name') or '-'} | {status} |\n"
+                )
+
+            if result.get("expected_units_check"):
+                output += "\n### 命名证据覆盖校验\n\n"
+                output += "| 序号 | 语义单元 | 词根 | 期望tag | 是否命中 | 命中位置 |\n"
+                output += "|------|----------|------|--------|----------|----------|\n"
+                for item in result["expected_units_check"]:
+                    hit_label = "✅" if item.get("matched") else "❌"
+                    output += (
+                        f"| {item.get('position', '-')} | {item.get('semantic_unit') or '-'} | "
+                        f"`{item.get('english_abbr') or '-'}` | {item.get('expected_tag') or '-'} | "
+                        f"{hit_label} | {item.get('matched_position') or '-'} |\n"
+                    )
+
+            violations = result.get("violations", [])
+            if violations:
+                output += "\n### 违规项\n\n"
+                for idx, violation in enumerate(violations, 1):
+                    output += f"{idx}. {violation.get('message', '未知违规')}\n"
+            else:
+                output += "\n### 违规项\n\n无\n"
+
+            output += "\n### 结构化结果\n\n"
+            output += "```json\n"
+            output += json.dumps(result, ensure_ascii=False, indent=2)
+            output += "\n```\n"
 
             return [TextContent(type="text", text=output)]
 
