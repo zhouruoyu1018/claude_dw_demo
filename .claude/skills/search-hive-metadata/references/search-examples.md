@@ -120,7 +120,7 @@ search_table("overdue")        → 1 张表
 3. ph_sac_dwd.dwd_loan_detail — 仅命中 search_table("overdue")
 ```
 
-**S6 确认**: Top1 多路命中优势明显 → 自动选定 `dwd_overdue_detail`，展示匹配路径：
+**S6 确认**: Top1 多路命中优势明显 → 自动选定 `ph_sac_dwd.dwd_overdue_detail`，展示匹配路径：
 ```
 找到匹配（通过智能搜索编排）:
   搜索路径: "首逾金额" → 拆词["首逾"] → 同义词["M1逾期"] → 命中
@@ -202,7 +202,7 @@ search_table("overdue")        → 1 张表
 ### 3. 处理多结果
 
 当搜索返回多个结果时：
-1. 根据分层优先级选择（ads > dws > dwd > ods）
+1. 根据分层优先级选择（da/ads > dm/dmm > dws > dwd > ods）
 2. 查看表注释判断业务含义
 3. 如不确定，使用交互式提问让用户选择
 
