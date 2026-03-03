@@ -83,6 +83,51 @@ get_table_detail(table_name_full="dwd.dwd_order_detail")
 | stat_date | STRING | 分区字段 |
 ```
 
+### 场景5: 业务术语无法直接匹配元数据（智能搜索编排）
+
+**用户需求**: "查找首逾金额相关的表"
+
+**直接搜索无结果**:
+```
+search_by_comment(term="首逾金额") → 0 结果
+```
+
+**触发智能搜索编排 (S1-S6)**:
+
+**S2 拆词**:
+```
+"首逾金额" → ["首逾", "金额"]
+```
+
+**S3 同义词扩展** (查 synonym.yaml):
+```
+"首逾" → ["M1逾期", "首次逾期", "首期逾期", "first_overdue", "首逾"]
+"金额" → 区分度低，降低优先级
+```
+
+**S4 并行搜索** (选取高区分度候选):
+```
+search_by_comment("M1逾期")    → 2 张表
+search_by_comment("首次逾期")  → 1 张表
+search_by_comment("首逾")      → 0 结果（验证原词确实搜不到）
+search_table("overdue")        → 1 张表
+```
+
+**S5 交叉排序**:
+```
+1. ph_sac_dwd.dwd_overdue_detail — 命中 "M1逾期" + "首次逾期"（2路命中）
+2. ph_sac_dmm.dmm_sac_overdue_daily — 仅命中 "M1逾期"（1路命中，dm层加分）
+3. ph_sac_dwd.dwd_loan_detail — 仅命中 search_table("overdue")
+```
+
+**S6 确认**: Top1 多路命中优势明显 → 自动选定 `dwd_overdue_detail`，展示匹配路径：
+```
+找到匹配（通过智能搜索编排）:
+  搜索路径: "首逾金额" → 拆词["首逾"] → 同义词["M1逾期"] → 命中
+  推荐表: ph_sac_dwd.dwd_overdue_detail
+  匹配字段: first_overdue_amt (DECIMAL(18,2)): M1逾期金额
+```
+
 ## 与 dw-requirement-triage 协作示例
 
 ### 完整工作流
@@ -163,18 +208,25 @@ get_table_detail(table_name_full="dwd.dwd_order_detail")
 
 ### 4. 常见业务术语映射
 
-| 业务术语 | 可能的字段名 |
-|---------|------------|
-| 订单金额 | order_amount, order_amt |
-| 用户ID | user_id, uid, customer_id |
-| 创建时间 | create_time, created_at, gmt_create |
-| 更新时间 | update_time, updated_at, gmt_modified |
-| 状态 | status, state, order_status |
-| 日期 | stat_date, date, biz_date |
+贷款业务的完整同义词映射见 [synonym.yaml](synonym.yaml)，覆盖进件、授信、放款、贷后全生命周期。
+
+以下为高频映射示例：
+
+| 业务俗称 | 标准术语（元数据注释中的措辞） |
+|---------|--------------------------|
+| 进件 | 申请、授信申请 |
+| 下款 | 放款、发放 |
+| 首逾 | M1逾期、首次逾期 |
+| 过件率 | 审批通过率、批核率 |
+| 提款 | 支用、动支 |
+| 结清 | 清偿、全部还款 |
 
 ### 5. 搜索无结果时的处理
 
-1. 尝试同义词（如"金额" → "amount"、"amt"）
-2. 尝试拆分术语（如"放款金额" → "放款" + "金额"）
-3. 扩大搜索范围（column → all）
-4. 标记为"待确认"，与业务方沟通
+当直接搜索无结果时，自动触发**智能搜索编排**流程（见 SKILL.md "智能搜索编排" 章节）：
+
+1. 拆词: 将复合术语拆为最小语义单元
+2. 同义词扩展: 查 synonym.yaml + Claude 领域知识
+3. 并行多路召回: 高区分度术语优先，最多 4 次搜索
+4. 交叉排序: 多路命中优先，dm/da 层优先
+5. 若仍零命中: 展示所有已尝试的搜索词，建议用户提供更多线索
