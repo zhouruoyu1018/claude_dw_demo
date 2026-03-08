@@ -477,8 +477,8 @@ if __name__ == '__main__':
         a.dt,
         a.product_id,
         b.product_name,
-        SUM(a.loan_amount) AS td_loan_amt,
-        COUNT(DISTINCT a.loan_id) AS td_loan_cnt,
+        SUM(a.loan_amount) AS today_loan_amt,
+        COUNT(DISTINCT a.loan_id) AS today_loan_cnt,
         SUM(CASE WHEN a.loan_status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_cnt,
         SUM(a.loan_amount) / NULLIF(COUNT(DISTINCT a.loan_id), 0) AS avg_loan_amt
     FROM dwd.dwd_loan_detail a

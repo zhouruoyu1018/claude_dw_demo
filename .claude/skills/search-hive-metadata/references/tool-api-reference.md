@@ -35,12 +35,56 @@
 
 ---
 
+### search_word_root_batch (批量查询，优先使用)
+
+批量查询多个语义单元的词根，最多 2 次 DB 查询（精确匹配 + 模糊回退），替代 N 次 `search_word_root` 并行调用。在 `generate-standard-ddl` Step 3.2 中优先使用。
+
+**参数:**
+- `keywords` (array[string], required): 待查询的语义单元列表，如 `["当日", "汇总", "放款", "金额"]`
+- `limit_per_keyword` (integer, optional): 每个关键词返回的最大候选数，默认 5
+
+**返回:**
+- `results`: 字典，key 为关键词，value 为该关键词的候选词根列表（每项含 `english_abbr`, `chinese_name`, `english_name`, `alias`, `tag`, `match_level`）
+- `total_keywords`: 输入关键词总数
+- `matched_keywords`: 有匹配结果的关键词数
+- `unmatched_keywords`: 无匹配结果的关键词列表
+
+**示例:**
+```json
+search_word_root_batch({
+  "keywords": ["今天", "汇总", "放款", "金额", "计数"],
+  "limit_per_keyword": 3
+})
+```
+
+**返回示例:**
+```json
+{
+  "results": {
+    "今天": [{"english_abbr": "today", "chinese_name": "今天", "tag": "TIME", "match_level": "exact"}],
+    "汇总": [{"english_abbr": "sum", "chinese_name": "汇总", "tag": "CONVERGE", "match_level": "exact"}],
+    "放款": [{"english_abbr": "loan", "chinese_name": "放款/贷款", "tag": "BIZ_ENTITY", "match_level": "exact"}],
+    "金额": [{"english_abbr": "amt", "chinese_name": "金额", "tag": "CATEGORY_WORD", "match_level": "exact"}],
+    "计数": [{"english_abbr": "cnt", "chinese_name": "件数/笔数", "tag": "CONVERGE", "match_level": "exact"}]
+  },
+  "total_keywords": 5,
+  "matched_keywords": 5,
+  "unmatched_keywords": []
+}
+```
+
+**与 search_word_root 的关系:**
+- `search_word_root_batch` 使用 2-phase 策略：精确匹配 `= ANY(...)` → 模糊回退 `LIKE`，最多 2 次 DB 查询
+- 当语义单元 ≥ 3 个时优先使用批量版本；批量工具不可用时降级为并行调用 `search_word_root`
+
+---
+
 ### validate_field_name
 
 校验字段名是否严格按词根表拼接。用于 DDL 输出前的强制闸门。
 
 **参数:**
-- `field_name` (string, required): 待校验字段名，如 `td_sum_loan_amt`
+- `field_name` (string, required): 待校验字段名，如 `today_sum_loan_amt`
 - `expected_units` (array, optional): 命名证据表映射，**顺序必须与字段名中 token 出现顺序一致**。每项包含：
   - `semantic_unit` (string, optional): 最小语义单元中文
   - `english_abbr` (string, required): 选中的词根缩写（支持含下划线的复合词根，如 `cur_mon`）
@@ -56,15 +100,119 @@
 **示例:**
 ```json
 validate_field_name({
-  "field_name": "td_sum_loan_amt",
+  "field_name": "today_sum_loan_amt",
   "expected_units": [
-    {"semantic_unit": "当日", "english_abbr": "td", "tag": "TIME"},
+    {"semantic_unit": "今天", "english_abbr": "today", "tag": "TIME"},
     {"semantic_unit": "汇总", "english_abbr": "sum", "tag": "CONVERGE"},
     {"semantic_unit": "放款", "english_abbr": "loan", "tag": "BIZ_ENTITY"},
     {"semantic_unit": "金额", "english_abbr": "amt", "tag": "CATEGORY_WORD"}
   ]
 })
 ```
+
+---
+
+### validate_field_names (批量校验，优先使用)
+
+批量校验多个字段名的词根存在性、tag 顺序、命名证据覆盖，并检测跨字段重名。DDL 输出前优先使用此工具，降级时再逐字段调用 `validate_field_name`。
+
+**参数:**
+- `fields` (array, required): 待校验字段列表，每项包含：
+  - `field_name` (string, required): 字段名
+  - `expected_units` (array, optional): 命名证据列表（同 `validate_field_name`），每项含 `english_abbr`(必填)、`semantic_unit`(可选)、`tag`(建议填)
+- `allow_same_tag_multi` (boolean, optional): 是否允许同一 tag 多次出现，默认 `true`
+- `expected_field_count` (integer, optional): 期望的字段总数。传入后会校验实际提交数 vs 期望数是否一致，用于检测模型遗漏字段
+
+**返回:**
+- `all_valid`: 是否全部通过（含 count_mismatch 时为 false）
+- `passed_count`: 通过字段数
+- `failed_count`: 失败字段数
+- `total_count`: 总字段数
+- `duplicate_fields`: 重名字段列表
+- `count_mismatch`: （仅当 expected_field_count 不匹配时出现）含 `expected`, `actual`, `message`
+- `results`: 各字段校验详情（同 `validate_field_name` 返回格式）
+
+**示例:**
+```json
+validate_field_names({
+  "fields": [
+    {
+      "field_name": "today_sum_loan_amt",
+      "expected_units": [
+        {"semantic_unit": "今天", "english_abbr": "today", "tag": "TIME"},
+        {"semantic_unit": "汇总", "english_abbr": "sum", "tag": "CONVERGE"},
+        {"semantic_unit": "放款", "english_abbr": "loan", "tag": "BIZ_ENTITY"},
+        {"semantic_unit": "金额", "english_abbr": "amt", "tag": "CATEGORY_WORD"}
+      ]
+    },
+    {
+      "field_name": "today_cnt_loan",
+      "expected_units": [
+        {"semantic_unit": "今天", "english_abbr": "today", "tag": "TIME"},
+        {"semantic_unit": "计数", "english_abbr": "cnt", "tag": "CONVERGE"},
+        {"semantic_unit": "放款", "english_abbr": "loan", "tag": "BIZ_ENTITY"}
+      ]
+    }
+  ],
+  "expected_field_count": 2
+})
+```
+
+**与 validate_field_name 的关系:**
+- `validate_field_names` 内部将所有字段的候选 token 合并为单次 DB 查询（O(1) vs O(n)），然后在内存中逐字段校验
+- 额外提供：跨字段重名检测、通过/失败统计、字段数完整性检查
+- DDL 场景默认使用批量版本；批量工具不可用时降级为并行调用单字段版本
+
+---
+
+### assemble_field_names (规则化拼接)
+
+按词根 tag 顺序规则化拼接字段名。输入已解析的 units(root+tag)，按 `BOOL → TIME → CONVERGE → BIZ_ENTITY → CATEGORY_WORD` 排序后用 `_` 连接，生成确定性字段名。可选 DB 校验词根存在性和 tag 一致性。
+
+**参数:**
+- `fields` (array, required): 待组装字段列表，每项包含：
+  - `cn_name` (string, optional): 中文字段名，用于标识
+  - `units` (array, required): 语义单元列表（顺序无关，工具自动按 tag 排序），每项：
+    - `root` (string, required): 词根缩写，如 `today`
+    - `tag` (string, required): 词根 tag，枚举: `BOOL`/`TIME`/`CONVERGE`/`BIZ_ENTITY`/`CATEGORY_WORD`
+- `validate` (boolean, optional): 是否查询 word_root_dict 验证词根存在性和 tag 一致性，默认 `true`
+
+**返回:**
+- `total`: 字段总数
+- `all_valid`: 是否全部通过
+- `assembled`: 各字段组装详情
+  - `cn_name`: 中文名
+  - `field_name`: 组装后的字段名
+  - `units_ordered`: 按 tag 排序后的单元列表（含 `position`、`db_status`）
+  - `is_valid`: 是否合法
+  - `warnings`: 警告列表（`root_not_in_db`/`tag_mismatch`/`ambiguous_tag`/`empty_units`）
+
+**示例:**
+
+```json
+assemble_field_names({
+  "fields": [
+    {
+      "cn_name": "当日放款金额",
+      "units": [
+        {"root": "today", "tag": "TIME"},
+        {"root": "sum", "tag": "CONVERGE"},
+        {"root": "loan", "tag": "BIZ_ENTITY"},
+        {"root": "amt", "tag": "CATEGORY_WORD"}
+      ]
+    }
+  ]
+})
+```
+
+返回: `{"total": 1, "all_valid": true, "assembled": [{"field_name": "today_sum_loan_amt", ...}]}`
+
+**同 tag 内排序：** 工具保持同 tag 内的输入顺序（stable sort），模型应在 units 中按"被修饰词在前，修饰词在后"排列。
+
+**与 validate_field_names 的关系:**
+- `assemble_field_names` 负责**组装**：输入 roots+tags → 输出排序拼接后的字段名
+- `validate_field_names` 负责**校验**：输入已拼接的字段名 → 输出词根拆解和违规检测
+- 推荐流程：先 `assemble_field_names` 组装 → 再 `validate_field_names` 最终校验
 
 ---
 
@@ -151,7 +299,7 @@ validate_field_name({
   - **必填字段:**
   - `indicator_code` (string): 指标编码，如 `IDX_LOAN_001`
   - `indicator_name` (string): 业务指标名称，如 `当日放款金额`
-  - `indicator_english_name` (string): 英文名/物理字段名，如 `td_loan_amt`
+  - `indicator_english_name` (string): 英文名/物理字段名，如 `today_loan_amt`
   - `indicator_category` (string): 指标分类: `原子指标`/`派生指标`/`复合指标`
   - `business_domain` (string): 业务域，如 `贷款`/`风控`/`营销`
   - `data_type` (string, **枚举**): 从元数据获取的物理字段类型。可选值: `TINYINT`/`SMALLINT`/`INT`/`BIGINT`/`FLOAT`/`DOUBLE`/`DECIMAL`/`STRING`/`VARCHAR`/`CHAR`/`DATE`/`TIMESTAMP`/`BOOLEAN`/`ARRAY`/`MAP`/`STRUCT`
@@ -180,7 +328,7 @@ register_indicator({
         {
             "indicator_code": "IDX_LOAN_001",
             "indicator_name": "当日放款金额",
-            "indicator_english_name": "td_sum_loan_amt",
+            "indicator_english_name": "today_sum_loan_amt",
             "indicator_category": "原子指标",
             "business_domain": "贷款",
             "data_type": "DECIMAL",
@@ -194,7 +342,7 @@ register_indicator({
         {
             "indicator_code": "IDX_LOAN_002",
             "indicator_name": "当日放款笔数",
-            "indicator_english_name": "td_cnt_loan",
+            "indicator_english_name": "today_cnt_loan",
             "indicator_category": "原子指标",
             "business_domain": "贷款",
             "data_type": "BIGINT",
@@ -247,7 +395,7 @@ register_lineage({
   "etl_logic_summary": "按产品维度聚合当日放款",
   "column_lineage": [
     {
-      "target_column": "td_sum_loan_amt",
+      "target_column": "today_sum_loan_amt",
       "source_table": "dwd.dwd_loan_detail",
       "source_column": "loan_amount",
       "transform_type": "SUM",

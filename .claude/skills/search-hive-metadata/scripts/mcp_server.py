@@ -520,27 +520,135 @@ def search_word_root(
         conn.close()
 
 
-def validate_field_name(
+def search_word_root_batch(
+    keywords: list[str],
+    limit_per_keyword: int = 5
+) -> dict:
+    """
+    批量搜索词根表。将多个语义单元合并为最多 2 次 DB 查询（精确 + 模糊兜底），
+    替代 N 次独立调用 search_word_root 的开销。
+
+    Args:
+        keywords: 语义单元关键词列表（中文或英文），如 ["放款", "金额", "逾期", "天数"]
+        limit_per_keyword: 每个关键词返回的最大候选数，默认 5
+
+    Returns:
+        {
+            "results": {keyword: [candidates]},
+            "total_keywords": N,
+            "matched_keywords": M,
+            "unmatched_keywords": [未命中的关键词]
+        }
+    """
+    if not keywords:
+        return {"results": {}, "total_keywords": 0, "matched_keywords": 0, "unmatched_keywords": []}
+
+    unique_keywords = list(dict.fromkeys(k.strip() for k in keywords if k and k.strip()))
+    if not unique_keywords:
+        return {"results": {}, "total_keywords": 0, "matched_keywords": 0, "unmatched_keywords": []}
+
+    conn = get_pg_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        lower_keywords = [k.lower() for k in unique_keywords]
+
+        # Step 1: 精确匹配（chinese_name / english_abbr / alias），使用 ANY 高效查询
+        sql_exact = """
+            SELECT english_abbr, chinese_name, english_name, alias, tag
+            FROM word_root_dict
+            WHERE chinese_name = ANY(%s)
+               OR lower(english_abbr) = ANY(%s)
+               OR lower(alias) = ANY(%s)
+            ORDER BY english_abbr, tag
+        """
+        cursor.execute(sql_exact, [unique_keywords, lower_keywords, lower_keywords])
+        exact_rows = [dict(row) for row in cursor.fetchall()]
+
+        # 按关键词分组精确匹配结果
+        results: dict[str, list] = {kw: [] for kw in unique_keywords}
+        for row in exact_rows:
+            cn = row.get("chinese_name") or ""
+            abbr = (row.get("english_abbr") or "").lower()
+            alias = (row.get("alias") or "").lower()
+
+            for kw in unique_keywords:
+                kw_lower = kw.lower()
+                if cn == kw or abbr == kw_lower or alias == kw_lower:
+                    if len(results[kw]) < limit_per_keyword:
+                        row_copy = dict(row)
+                        row_copy["score"] = 100
+                        row_copy["match_level"] = "exact"
+                        results[kw].append(row_copy)
+
+        # Step 2: 对未命中的关键词做模糊查询（LIKE %keyword%）
+        unmatched = [kw for kw in unique_keywords if not results[kw]]
+        if unmatched:
+            like_conditions = []
+            like_params = []
+            for kw in unmatched:
+                like_conditions.append(
+                    "(chinese_name LIKE %s OR lower(english_abbr) LIKE %s "
+                    "OR lower(english_name) LIKE %s OR lower(alias) LIKE %s)"
+                )
+                cn_contains = f"%{kw}%"
+                en_contains = f"%{kw.lower()}%"
+                like_params.extend([cn_contains, en_contains, en_contains, en_contains])
+
+            sql_fuzzy = f"""
+                SELECT english_abbr, chinese_name, english_name, alias, tag
+                FROM word_root_dict
+                WHERE {' OR '.join(like_conditions)}
+                ORDER BY english_abbr, tag
+            """
+            cursor.execute(sql_fuzzy, like_params)
+            fuzzy_rows = [dict(row) for row in cursor.fetchall()]
+
+            for row in fuzzy_rows:
+                cn = row.get("chinese_name") or ""
+                en = (row.get("english_name") or "").lower()
+                abbr = (row.get("english_abbr") or "").lower()
+                alias = (row.get("alias") or "").lower()
+
+                for kw in unmatched:
+                    kw_lower = kw.lower()
+                    if kw in cn or kw_lower in abbr or kw_lower in en or kw_lower in alias:
+                        if len(results[kw]) < limit_per_keyword:
+                            row_copy = dict(row)
+                            row_copy["score"] = 70
+                            row_copy["match_level"] = "fuzzy"
+                            results[kw].append(row_copy)
+
+    finally:
+        cursor.close()
+        conn.close()
+
+    matched_count = sum(1 for v in results.values() if v)
+    final_unmatched = [kw for kw in unique_keywords if not results.get(kw)]
+
+    return {
+        "results": results,
+        "total_keywords": len(unique_keywords),
+        "matched_keywords": matched_count,
+        "unmatched_keywords": final_unmatched
+    }
+
+
+def _validate_field_with_root_map(
     field_name: str,
+    root_map: dict,
     expected_units: list[dict] = None,
     allow_same_tag_multi: bool = True
 ) -> dict:
     """
-    校验字段名是否完全由词根表拼接而成，并验证 tag 顺序和语义覆盖。
+    内部函数：使用预构建的 root_map 校验单个字段名。
+    由 validate_field_name（单字段）和 validate_field_names（批量）共同调用。
 
     Args:
-        field_name: 待校验字段名，如 td_sum_loan_amt
-        expected_units: 可选的期望语义单元列表，每项可包含:
-            - semantic_unit: 语义单元中文
-            - english_abbr / selected_root / root: 选中的词根缩写
-            - tag / selected_tag: 期望 tag
+        field_name: 待校验字段名
+        root_map: {english_abbr_lower: [row_dict, ...]}，预构建的词根查找表
+        expected_units: 期望语义单元列表
         allow_same_tag_multi: 是否允许同一 tag 出现多个词根
-
-    Returns:
-        校验结果 dict:
-        - is_valid: 是否通过
-        - tokens: 拆分后的词根详情
-        - violations: 违规列表
     """
     field_name = (field_name or "").strip()
     segments = [part.strip().lower() for part in field_name.split("_") if part.strip()]
@@ -599,40 +707,8 @@ def validate_field_name(
                 "message": f"expected_units[{unit['position']}] 缺少 english_abbr"
             })
 
-    # 生成所有可能的复合词根候选（最多连续 3 段）
-    MAX_COMPOUND = 3
-    candidates = set()
-    for i in range(len(segments)):
-        for length in range(1, min(MAX_COMPOUND, len(segments) - i) + 1):
-            candidates.add("_".join(segments[i:i + length]))
-
-    conn = get_pg_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-
-    try:
-        sql = """
-            SELECT
-                english_abbr,
-                chinese_name,
-                english_name,
-                alias,
-                tag
-            FROM word_root_dict
-            WHERE lower(english_abbr) = ANY(%s)
-            ORDER BY english_abbr, tag
-        """
-        cursor.execute(sql, (list(candidates),))
-        rows = [dict(row) for row in cursor.fetchall()]
-    finally:
-        cursor.close()
-        conn.close()
-
-    root_map = {}
-    for row in rows:
-        key = str(row.get("english_abbr") or "").strip().lower()
-        root_map.setdefault(key, []).append(row)
-
     # 贪心最长匹配：将 segments 合并为最终 tokens
+    MAX_COMPOUND = 3
     tokens = []
     i = 0
     while i < len(segments):
@@ -808,6 +884,342 @@ def validate_field_name(
         "expected_units_check": expected_checks,
         "violations": violations
     }
+
+
+def validate_field_name(
+    field_name: str,
+    expected_units: list[dict] = None,
+    allow_same_tag_multi: bool = True
+) -> dict:
+    """
+    校验字段名是否完全由词根表拼接而成，并验证 tag 顺序和语义覆盖。
+    单字段版本，每次调用独立查询 DB。批量场景请使用 validate_field_names。
+    """
+    field_name = (field_name or "").strip()
+    segments = [part.strip().lower() for part in field_name.split("_") if part.strip()]
+
+    if not segments:
+        return _validate_field_with_root_map(field_name, {}, expected_units, allow_same_tag_multi)
+
+    # 生成所有可能的复合词根候选（最多连续 3 段）
+    MAX_COMPOUND = 3
+    candidates = set()
+    for i in range(len(segments)):
+        for length in range(1, min(MAX_COMPOUND, len(segments) - i) + 1):
+            candidates.add("_".join(segments[i:i + length]))
+
+    conn = get_pg_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        sql = """
+            SELECT
+                english_abbr, chinese_name, english_name, alias, tag
+            FROM word_root_dict
+            WHERE lower(english_abbr) = ANY(%s)
+            ORDER BY english_abbr, tag
+        """
+        cursor.execute(sql, (list(candidates),))
+        rows = [dict(row) for row in cursor.fetchall()]
+    finally:
+        cursor.close()
+        conn.close()
+
+    root_map = {}
+    for row in rows:
+        key = str(row.get("english_abbr") or "").strip().lower()
+        root_map.setdefault(key, []).append(row)
+
+    return _validate_field_with_root_map(field_name, root_map, expected_units, allow_same_tag_multi)
+
+
+def validate_field_names(
+    fields: list[dict],
+    allow_same_tag_multi: bool = True,
+    expected_field_count: int = None
+) -> dict:
+    """
+    批量校验多个字段名。单次 DB 查询 + 跨字段重名检测 + 字段数完整性校验。
+
+    Args:
+        fields: 待校验字段列表，每项包含:
+            - field_name: 字段名
+            - expected_units: 命名证据（同 validate_field_name）
+        allow_same_tag_multi: 是否允许同一 tag 出现多个词根
+        expected_field_count: 期望字段总数（含维度+指标），用于检测字段遗漏
+
+    Returns:
+        批量校验结果:
+        - all_valid: 是否全部通过（含字段数校验）
+        - passed_count / failed_count / total_count
+        - duplicate_fields: 重名字段列表
+        - count_mismatch: 字段数不匹配详情（仅在不匹配时出现）
+        - results: 各字段校验详情
+    """
+    if not fields:
+        result = {
+            "all_valid": True,
+            "passed_count": 0,
+            "failed_count": 0,
+            "total_count": 0,
+            "duplicate_fields": [],
+            "results": []
+        }
+        if expected_field_count is not None and expected_field_count > 0:
+            result["all_valid"] = False
+            result["count_mismatch"] = {
+                "expected": expected_field_count,
+                "actual": 0,
+                "message": f"期望 {expected_field_count} 个字段，实际提交 0 个"
+            }
+        return result
+
+    # Phase 1: 收集所有字段的候选 compound token（单次遍历）
+    MAX_COMPOUND = 3
+    all_candidates = set()
+    field_name_counts: dict[str, int] = {}
+
+    for item in fields:
+        if not isinstance(item, dict):
+            continue
+        fname = (item.get("field_name") or "").strip()
+        field_name_counts[fname] = field_name_counts.get(fname, 0) + 1
+        segments = [part.strip().lower() for part in fname.split("_") if part.strip()]
+        for i in range(len(segments)):
+            for length in range(1, min(MAX_COMPOUND, len(segments) - i) + 1):
+                all_candidates.add("_".join(segments[i:i + length]))
+
+    # Phase 2: 单次 DB 查询构建共享 root_map
+    root_map = {}
+    if all_candidates:
+        conn = get_pg_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            sql = """
+                SELECT english_abbr, chinese_name, english_name, alias, tag
+                FROM word_root_dict
+                WHERE lower(english_abbr) = ANY(%s)
+                ORDER BY english_abbr, tag
+            """
+            cursor.execute(sql, (list(all_candidates),))
+            for row in cursor.fetchall():
+                key = str(row.get("english_abbr") or "").strip().lower()
+                root_map.setdefault(key, []).append(dict(row))
+        finally:
+            cursor.close()
+            conn.close()
+
+    # Phase 3: 逐字段校验（复用共享 root_map，无额外 DB 开销）
+    results = []
+    for item in fields:
+        if not isinstance(item, dict):
+            results.append({
+                "field_name": str(item),
+                "is_valid": False,
+                "violations": [{"type": "invalid_input", "message": "输入项不是对象"}],
+                "tokens": [],
+                "expected_units_check": []
+            })
+            continue
+
+        fname = (item.get("field_name") or "").strip()
+        result = _validate_field_with_root_map(
+            field_name=fname,
+            root_map=root_map,
+            expected_units=item.get("expected_units"),
+            allow_same_tag_multi=allow_same_tag_multi
+        )
+        results.append(result)
+
+    # Phase 4: 跨字段重名检测
+    duplicate_fields = [name for name, count in field_name_counts.items() if count > 1]
+    if duplicate_fields:
+        for r in results:
+            if r.get("field_name") in duplicate_fields:
+                r["is_valid"] = False
+                r.setdefault("violations", []).append({
+                    "type": "duplicate_field_name",
+                    "message": f"字段名 `{r['field_name']}` 在本批次中出现多次"
+                })
+
+    passed = sum(1 for r in results if r.get("is_valid"))
+    failed = len(results) - passed
+
+    output = {
+        "all_valid": failed == 0,
+        "passed_count": passed,
+        "failed_count": failed,
+        "total_count": len(results),
+        "duplicate_fields": duplicate_fields,
+        "results": results
+    }
+
+    # Phase 5: 字段数完整性校验
+    if expected_field_count is not None and len(results) != expected_field_count:
+        output["all_valid"] = False
+        output["count_mismatch"] = {
+            "expected": expected_field_count,
+            "actual": len(results),
+            "message": f"期望 {expected_field_count} 个字段，实际提交 {len(results)} 个，可能存在遗漏"
+        }
+
+    return output
+
+
+def assemble_field_names(fields: list[dict], validate: bool = True) -> dict:
+    """
+    按词根 tag 顺序规则化拼接字段名。
+
+    输入已解析的 units(root+tag)，按 BOOL → TIME → CONVERGE → BIZ_ENTITY → CATEGORY_WORD
+    排序后用 '_' 连接，生成确定性字段名。可选 DB 校验词根存在性和 tag 一致性。
+
+    Args:
+        fields: 字段列表，每项包含:
+            - cn_name (str): 中文字段名，用于标识（如 '当日放款金额'）
+            - units (list[dict]): 语义单元列表，每项:
+                - root (str, required): 词根缩写（如 'today'）
+                - tag (str, required): 词根 tag（BOOL/TIME/CONVERGE/BIZ_ENTITY/CATEGORY_WORD）
+        validate: 是否查询 word_root_dict 验证词根存在性和 tag 一致性，默认 True
+
+    Returns:
+        组装结果:
+        - total: 字段总数
+        - all_valid: 是否全部通过（仅 validate=True 时有效）
+        - assembled: 各字段组装详情
+    """
+    if not fields:
+        return {"total": 0, "all_valid": True, "assembled": []}
+
+    # Phase 1: 收集所有 roots 去重（用于批量 DB 查询）
+    all_roots = set()
+    for item in fields:
+        if not isinstance(item, dict):
+            continue
+        for unit in item.get("units") or []:
+            root = (unit.get("root") or "").strip().lower()
+            if root:
+                all_roots.add(root)
+
+    # Phase 2: 批量 DB 查询词根表（仅 validate=True 时）
+    root_db_map = {}  # {root_lower: [{english_abbr, tag, ...}, ...]}
+    if validate and all_roots:
+        conn = get_pg_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            sql = """
+                SELECT english_abbr, chinese_name, english_name, alias, tag
+                FROM word_root_dict
+                WHERE lower(english_abbr) = ANY(%s)
+                ORDER BY english_abbr, tag
+            """
+            cursor.execute(sql, (list(all_roots),))
+            for row in cursor.fetchall():
+                key = str(row.get("english_abbr") or "").strip().lower()
+                root_db_map.setdefault(key, []).append(dict(row))
+        finally:
+            cursor.close()
+            conn.close()
+
+    # Phase 3: 逐字段组装
+    assembled = []
+    for item in fields:
+        if not isinstance(item, dict):
+            assembled.append({
+                "cn_name": str(item),
+                "field_name": "",
+                "units_ordered": [],
+                "is_valid": False,
+                "warnings": [{"type": "invalid_input", "message": "输入项不是对象"}]
+            })
+            continue
+
+        cn_name = item.get("cn_name") or ""
+        units = item.get("units") or []
+        warnings = []
+
+        if not units:
+            assembled.append({
+                "cn_name": cn_name,
+                "field_name": "",
+                "units_ordered": [],
+                "is_valid": False,
+                "warnings": [{"type": "empty_units", "message": "units 为空，无法组装"}]
+            })
+            continue
+
+        # 解析并标注每个 unit
+        parsed_units = []
+        field_valid = True
+        for unit in units:
+            root = (unit.get("root") or "").strip().lower()
+            tag = (unit.get("tag") or "").strip().upper()
+            rank = WORD_ROOT_TAG_RANK.get(tag)
+
+            unit_info = {"root": root, "tag": tag, "db_status": "skip"}
+
+            if not root:
+                warnings.append({"type": "empty_root", "message": "存在空 root"})
+                field_valid = False
+                continue
+
+            if rank is None:
+                warnings.append({
+                    "type": "invalid_tag",
+                    "message": f"词根 `{root}` 的 tag `{tag}` 不在合法范围 {WORD_ROOT_TAG_ORDER}"
+                })
+                field_valid = False
+
+            # DB 校验
+            if validate:
+                db_rows = root_db_map.get(root, [])
+                if not db_rows:
+                    unit_info["db_status"] = "not_found"
+                    warnings.append({
+                        "type": "root_not_in_db",
+                        "message": f"词根 `{root}` 不在 word_root_dict 中"
+                    })
+                    field_valid = False
+                else:
+                    db_tags = [r["tag"] for r in db_rows]
+                    if tag in db_tags:
+                        if len(db_tags) > 1:
+                            unit_info["db_status"] = "ambiguous"
+                            warnings.append({
+                                "type": "ambiguous_tag",
+                                "message": f"词根 `{root}` 在 DB 中有多个 tag: {db_tags}，当前选择 `{tag}`"
+                            })
+                        else:
+                            unit_info["db_status"] = "ok"
+                    else:
+                        unit_info["db_status"] = "tag_mismatch"
+                        warnings.append({
+                            "type": "tag_mismatch",
+                            "message": f"词根 `{root}` 传入 tag=`{tag}`，但 DB 记录为 {db_tags}"
+                        })
+                        field_valid = False
+
+            parsed_units.append((rank if rank is not None else 999, unit_info))
+
+        # 按 tag rank 排序，同 rank 保持输入顺序（stable sort）
+        parsed_units.sort(key=lambda x: x[0])
+        units_ordered = []
+        for pos, (_, unit_info) in enumerate(parsed_units, 1):
+            unit_info["position"] = pos
+            units_ordered.append(unit_info)
+
+        # 拼接字段名
+        field_name = "_".join(u["root"] for u in units_ordered)
+
+        assembled.append({
+            "cn_name": cn_name,
+            "field_name": field_name,
+            "units_ordered": units_ordered,
+            "is_valid": field_valid,
+            "warnings": warnings
+        })
+
+    all_valid = all(a.get("is_valid", False) for a in assembled)
+    return {"total": len(assembled), "all_valid": all_valid, "assembled": assembled}
 
 
 def search_existing_indicators(metric_name: str, limit: int = 10) -> list[dict]:
@@ -1369,7 +1781,7 @@ def register_indicator(indicators: list[dict], created_by: str = "auto") -> dict
             必填字段:
             - indicator_code (str): 指标编码，如 'IDX_LOAN_001'
             - indicator_name (str): 业务指标名称，如 '当日放款金额'
-            - indicator_english_name (str): 英文名/物理字段名，如 'td_loan_amt'
+            - indicator_english_name (str): 英文名/物理字段名，如 'today_loan_amt'
             - indicator_category (str): 指标分类: '原子指标'/'派生指标'/'复合指标'
             - business_domain (str): 业务域，如 '贷款'/'风控'/'营销'
             - data_type (str): 数据类型，须从元数据获取，枚举: TINYINT/SMALLINT/INT/BIGINT/FLOAT/DOUBLE/DECIMAL/STRING/VARCHAR/CHAR/DATE/TIMESTAMP/BOOLEAN/ARRAY/MAP/STRUCT
@@ -1794,6 +2206,26 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="search_word_root_batch",
+            description="批量搜索词根表。将多个语义单元合并为最多 2 次 DB 查询（精确 + 模糊兜底），替代 N 次独立调用 search_word_root。字段较多时（>5 个语义单元）优先使用。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "语义单元关键词列表（中文或英文），如 ['放款', '金额', '逾期', '天数']"
+                    },
+                    "limit_per_keyword": {
+                        "type": "integer",
+                        "description": "每个关键词返回的最大候选数，默认 5",
+                        "default": 5
+                    }
+                },
+                "required": ["keywords"]
+            }
+        ),
+        Tool(
             name="validate_field_name",
             description="校验字段名是否严格基于词根表拼接，检查词根存在性、tag 顺序以及与命名证据表的一致性。",
             inputSchema={
@@ -1801,7 +2233,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "field_name": {
                         "type": "string",
-                        "description": "待校验字段名，如 'td_sum_loan_amt'"
+                        "description": "待校验字段名，如 'today_sum_loan_amt'"
                     },
                     "expected_units": {
                         "type": "array",
@@ -1833,6 +2265,110 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["field_name"]
+            }
+        ),
+        Tool(
+            name="validate_field_names",
+            description="批量校验多个字段名的词根存在性、tag 顺序、命名证据覆盖和跨字段重名检测。DDL 输出前优先使用此批量工具，降级时再逐字段调用 validate_field_name。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "fields": {
+                        "type": "array",
+                        "description": "待校验字段列表",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "field_name": {
+                                    "type": "string",
+                                    "description": "待校验字段名，如 'today_sum_loan_amt'"
+                                },
+                                "expected_units": {
+                                    "type": "array",
+                                    "description": "命名证据列表",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "semantic_unit": {
+                                                "type": "string",
+                                                "description": "最小语义单元中文"
+                                            },
+                                            "english_abbr": {
+                                                "type": "string",
+                                                "description": "选中的词根缩写"
+                                            },
+                                            "tag": {
+                                                "type": "string",
+                                                "enum": ["BOOL", "TIME", "CONVERGE", "BIZ_ENTITY", "CATEGORY_WORD"],
+                                                "description": "期望 tag"
+                                            }
+                                        },
+                                        "required": ["english_abbr"]
+                                    }
+                                }
+                            },
+                            "required": ["field_name"]
+                        }
+                    },
+                    "allow_same_tag_multi": {
+                        "type": "boolean",
+                        "description": "是否允许同一 tag 出现多个词根，默认 true",
+                        "default": True
+                    },
+                    "expected_field_count": {
+                        "type": "integer",
+                        "description": "期望字段总数（含维度+指标），用于检测字段遗漏。不传则跳过数量校验"
+                    }
+                },
+                "required": ["fields"]
+            }
+        ),
+        Tool(
+            name="assemble_field_names",
+            description="按词根 tag 顺序规则化拼接字段名。输入已解析的 units(root+tag)，按 BOOL→TIME→CONVERGE→BIZ_ENTITY→CATEGORY_WORD 排序后用 '_' 连接，生成确定性字段名。可选 DB 校验词根存在性和 tag 一致性。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "fields": {
+                        "type": "array",
+                        "description": "待组装字段列表",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "cn_name": {
+                                    "type": "string",
+                                    "description": "中文字段名，用于标识，如 '当日放款金额'"
+                                },
+                                "units": {
+                                    "type": "array",
+                                    "description": "语义单元列表（顺序无关，工具自动按 tag 排序）",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "root": {
+                                                "type": "string",
+                                                "description": "词根缩写，如 'today'"
+                                            },
+                                            "tag": {
+                                                "type": "string",
+                                                "enum": ["BOOL", "TIME", "CONVERGE", "BIZ_ENTITY", "CATEGORY_WORD"],
+                                                "description": "词根 tag"
+                                            }
+                                        },
+                                        "required": ["root", "tag"]
+                                    }
+                                }
+                            },
+                            "required": ["units"]
+                        }
+                    },
+                    "validate": {
+                        "type": "boolean",
+                        "description": "是否查询 word_root_dict 验证词根存在性和 tag 一致性，默认 true",
+                        "default": True
+                    }
+                },
+                "required": ["fields"]
             }
         ),
         Tool(
@@ -2009,7 +2545,7 @@ async def list_tools() -> list[Tool]:
                                 },
                                 "indicator_english_name": {
                                     "type": "string",
-                                    "description": "英文名/物理字段名，如 'td_loan_amt'"
+                                    "description": "英文名/物理字段名，如 'today_loan_amt'"
                                 },
                                 "indicator_alias": {
                                     "type": "string",
@@ -2303,6 +2839,39 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
             return [TextContent(type="text", text=output)]
 
+        elif name == "search_word_root_batch":
+            result = search_word_root_batch(
+                keywords=arguments["keywords"],
+                limit_per_keyword=arguments.get("limit_per_keyword", 5)
+            )
+
+            output = f"## 批量词根查询\n\n"
+            output += f"- **总计**: {result['total_keywords']} 个语义单元\n"
+            output += f"- **命中**: {result['matched_keywords']}\n"
+
+            if result["unmatched_keywords"]:
+                output += f"- **未命中**: {', '.join(f'`{k}`' for k in result['unmatched_keywords'])}\n"
+
+            output += "\n### 查询结果\n\n"
+            for kw, candidates in result["results"].items():
+                if candidates:
+                    output += f"#### \"{kw}\"\n\n"
+                    output += "| 缩写 | 中文名 | tag | 匹配 | 评分 |\n"
+                    output += "|------|--------|-----|------|------|\n"
+                    for c in candidates:
+                        abbr = c.get("english_abbr", "-")
+                        cn = c.get("chinese_name", "-") or "-"
+                        tag = c.get("tag", "-") or "-"
+                        ml = c.get("match_level", "-")
+                        sc = c.get("score", "-")
+                        output += f"| `{abbr}` | {cn} | {tag} | {ml} | {sc} |\n"
+                    output += "\n"
+
+            output += "**命名约束**: 仅可使用查询结果中的 `缩写` 与 `tag`，"
+            output += "必须按 `BOOL -> TIME -> CONVERGE -> BIZ_ENTITY -> CATEGORY_WORD` 组装\n"
+
+            return [TextContent(type="text", text=output)]
+
         elif name == "validate_field_name":
             result = validate_field_name(
                 field_name=arguments["field_name"],
@@ -2343,6 +2912,106 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     output += f"{idx}. {violation.get('message', '未知违规')}\n"
             else:
                 output += "\n### 违规项\n\n无\n"
+
+            output += "\n### 结构化结果\n\n"
+            output += "```json\n"
+            output += json.dumps(result, ensure_ascii=False, indent=2)
+            output += "\n```\n"
+
+            return [TextContent(type="text", text=output)]
+
+        elif name == "validate_field_names":
+            result = validate_field_names(
+                fields=arguments["fields"],
+                allow_same_tag_multi=arguments.get("allow_same_tag_multi", True),
+                expected_field_count=arguments.get("expected_field_count")
+            )
+
+            status_icon = "✅" if result["all_valid"] else "❌"
+            output = f"## 批量字段名校验 {status_icon}\n\n"
+            output += f"- **总计**: {result['total_count']} 个字段\n"
+            output += f"- **通过**: {result['passed_count']}\n"
+            output += f"- **失败**: {result['failed_count']}\n"
+
+            if "count_mismatch" in result:
+                cm = result["count_mismatch"]
+                output += f"- **⚠️ 字段数不匹配**: {cm['message']}\n"
+
+            if result["duplicate_fields"]:
+                output += f"- **重名字段**: {', '.join(f'`{f}`' for f in result['duplicate_fields'])}\n"
+
+            output += "\n### 逐字段结果\n\n"
+            output += "| # | 字段名 | 结果 | 违规数 |\n"
+            output += "|---|--------|------|--------|\n"
+
+            for idx, r in enumerate(result["results"], 1):
+                icon = "✅" if r.get("is_valid") else "❌"
+                v_count = len(r.get("violations", []))
+                output += f"| {idx} | `{r.get('field_name', '-')}` | {icon} | {v_count} |\n"
+
+            # 仅展示失败字段的详细违规
+            failed_results = [r for r in result["results"] if not r.get("is_valid")]
+            if failed_results:
+                output += "\n### 失败字段详情\n\n"
+                for r in failed_results:
+                    output += f"#### `{r.get('field_name', '-')}`\n\n"
+
+                    # 拆解结果
+                    output += "| 位置 | 词根 | tag | 中文名 | 状态 |\n"
+                    output += "|------|------|-----|--------|------|\n"
+                    for item in r.get("tokens", []):
+                        status = "已命中" if item.get("status") == "ok" else "未命中"
+                        output += (
+                            f"| {item.get('position', '-')} | `{item.get('token', '-')}` | "
+                            f"{item.get('tag') or '-'} | {item.get('chinese_name') or '-'} | {status} |\n"
+                        )
+
+                    # 违规项
+                    violations = r.get("violations", [])
+                    if violations:
+                        output += "\n违规项:\n"
+                        for vi, violation in enumerate(violations, 1):
+                            output += f"{vi}. {violation.get('message', '未知违规')}\n"
+                    output += "\n"
+
+            output += "\n### 结构化结果\n\n"
+            output += "```json\n"
+            output += json.dumps(result, ensure_ascii=False, indent=2)
+            output += "\n```\n"
+
+            return [TextContent(type="text", text=output)]
+
+        elif name == "assemble_field_names":
+            result = assemble_field_names(
+                fields=arguments["fields"],
+                validate=arguments.get("validate", True)
+            )
+
+            status_icon = "✅" if result["all_valid"] else "⚠️"
+            output = f"## 字段名组装结果 {status_icon}\n\n"
+            output += f"- **总计**: {result['total']} 个字段\n"
+            output += f"- **全部合法**: {'是' if result['all_valid'] else '否'}\n\n"
+
+            output += "| # | 中文名 | 组装结果 | 状态 | 警告数 |\n"
+            output += "|---|--------|----------|------|--------|\n"
+            for idx, a in enumerate(result["assembled"], 1):
+                icon = "✅" if a.get("is_valid") else "❌"
+                w_count = len(a.get("warnings", []))
+                output += f"| {idx} | {a.get('cn_name', '-')} | `{a.get('field_name', '-')}` | {icon} | {w_count} |\n"
+
+            # 展示有警告的字段详情
+            warned = [a for a in result["assembled"] if a.get("warnings")]
+            if warned:
+                output += "\n### 警告详情\n\n"
+                for a in warned:
+                    output += f"#### `{a.get('field_name', '-')}` ({a.get('cn_name', '')})\n\n"
+                    output += "**组装顺序:**\n"
+                    for u in a.get("units_ordered", []):
+                        output += f"  {u.get('position', '-')}. `{u.get('root', '-')}` ({u.get('tag', '-')}) — DB: {u.get('db_status', '-')}\n"
+                    output += "\n**警告:**\n"
+                    for wi, w in enumerate(a.get("warnings", []), 1):
+                        output += f"  {wi}. [{w.get('type', '-')}] {w.get('message', '')}\n"
+                    output += "\n"
 
             output += "\n### 结构化结果\n\n"
             output += "```json\n"

@@ -10,13 +10,13 @@
 
 ```sql
 -- 日环比：当日 vs 昨日
-LAG(td_sum_loan_amt, 1) OVER (
+LAG(today_sum_loan_amt, 1) OVER (
     PARTITION BY product_code
     ORDER BY stat_date
 ) AS yd_sum_loan_amt
 
 -- 周同比：当日 vs 上周同天
-LAG(td_sum_loan_amt, 7) OVER (
+LAG(today_sum_loan_amt, 7) OVER (
     PARTITION BY product_code
     ORDER BY stat_date
 ) AS lw_sum_loan_amt
@@ -28,9 +28,9 @@ LAG(mon_sum_loan_amt, 1) OVER (
 ) AS lm_sum_loan_amt
 
 -- 环比增长率
-(td_sum_loan_amt - LAG(td_sum_loan_amt, 1) OVER (...))
-    / NULLIF(LAG(td_sum_loan_amt, 1) OVER (...), 0)
-    AS td_growth_rate
+(today_sum_loan_amt - LAG(today_sum_loan_amt, 1) OVER (...))
+    / NULLIF(LAG(today_sum_loan_amt, 1) OVER (...), 0)
+    AS today_growth_rate
 ```
 
 ### 1.2 排名
@@ -51,7 +51,7 @@ RANK() OVER (
 -- 并列排名（不跳号）
 DENSE_RANK() OVER (
     PARTITION BY channel_code
-    ORDER BY td_sum_loan_amt DESC
+    ORDER BY today_sum_loan_amt DESC
 ) AS drank
 ```
 
@@ -59,28 +59,28 @@ DENSE_RANK() OVER (
 
 ```sql
 -- 月初至今累计
-SUM(td_sum_loan_amt) OVER (
+SUM(today_sum_loan_amt) OVER (
     PARTITION BY product_code, SUBSTR(stat_date, 1, 7)
     ORDER BY stat_date
     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 ) AS mtd_sum_loan_amt
 
 -- 年初至今累计
-SUM(td_sum_loan_amt) OVER (
+SUM(today_sum_loan_amt) OVER (
     PARTITION BY product_code, SUBSTR(stat_date, 1, 4)
     ORDER BY stat_date
     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 ) AS ytd_sum_loan_amt
 
 -- 近7日移动平均
-AVG(td_sum_loan_amt) OVER (
+AVG(today_sum_loan_amt) OVER (
     PARTITION BY product_code
     ORDER BY stat_date
     ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
 ) AS p7d_avg_loan_amt
 
 -- 近30日滑动求和
-SUM(td_sum_loan_amt) OVER (
+SUM(today_sum_loan_amt) OVER (
     PARTITION BY product_code
     ORDER BY stat_date
     ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
@@ -196,7 +196,7 @@ WHERE cur.stat_date = '${stat_date}'
 SELECT
     COALESCE(product_code, '全部')       AS product_code,
     COALESCE(channel_code, '全部')       AS channel_code,
-    SUM(loan_amount)                     AS td_sum_loan_amt,
+    SUM(loan_amount)                     AS today_sum_loan_amt,
     GROUPING__ID                         AS grouping_id     -- Hive
 FROM dwd.dwd_loan_detail
 WHERE stat_date = '${stat_date}'

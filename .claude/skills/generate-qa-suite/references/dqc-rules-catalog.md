@@ -277,8 +277,8 @@ SELECT ABS(
 SELECT COUNT(*) AS inconsistent_cnt
 FROM {table}
 WHERE stat_date = '${stat_date}'
-  AND td_cnt_loan > 0
-  AND td_sum_loan_amt <= 0;
+  AND today_cnt_loan > 0
+  AND today_sum_loan_amt <= 0;
 -- ERROR if inconsistent_cnt > 0
 
 -- 示例: 比率 = 分子 / 分母

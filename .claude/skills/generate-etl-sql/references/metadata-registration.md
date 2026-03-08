@@ -43,7 +43,7 @@
     {
       "indicator_code": "IDX_LOAN_001",
       "indicator_name": "当日放款金额",
-      "indicator_english_name": "td_sum_loan_amt",
+      "indicator_english_name": "today_sum_loan_amt",
       "indicator_category": "原子指标",
       "business_domain": "贷款",
       "data_type": "DECIMAL",
@@ -113,7 +113,7 @@
   "etl_logic_summary": "按产品维度聚合当日放款",
   "column_lineage": [
     {
-      "target_column": "td_sum_loan_amt",
+      "target_column": "today_sum_loan_amt",
       "source_table": "dwd.dwd_loan_detail",
       "source_column": "loan_amount",
       "transform_type": "SUM",

@@ -25,8 +25,8 @@ FROM ...
 
 -- 自动对齐为目标表真实字段
 ✅ report_date  → dt
-✅ total_amount → td_loan_amt
-✅ cnt          → td_loan_cnt
+✅ total_amount → today_loan_amt
+✅ cnt          → today_loan_cnt
 ```
 
 **影响范围**:
@@ -74,7 +74,7 @@ parser = SQLParser(
 ```python
 ⚠️ 字段数量不匹配: SQL 8 vs 目标表 5
    SQL 字段: [report_date, total_amount, ...]
-   目标表字段: [dt, td_loan_amt, ...]
+   目标表字段: [dt, today_loan_amt, ...]
 ℹ️ 跳过字段对齐，使用 SQL 别名
 ```
 
@@ -102,8 +102,8 @@ parser = SQLParser(
 
 ```
 🔀 字段对齐: report_date → dt
-🔀 字段对齐: total_amount → td_loan_amt
-🔀 字段对齐: cnt → td_loan_cnt
+🔀 字段对齐: total_amount → today_loan_amt
+🔀 字段对齐: cnt → today_loan_cnt
 ```
 
 如果未输出，说明：

@@ -16,18 +16,18 @@ SELECT
     b.product_type,
 
     -- 放款指标
-    SUM(a.loan_amount) AS td_loan_amt,
-    COUNT(DISTINCT a.loan_id) AS td_loan_cnt,
-    SUM(CASE WHEN a.loan_status = 'SUCCESS' THEN 1 ELSE 0 END) AS td_success_cnt,
-    SUM(CASE WHEN a.loan_status = 'FAILED' THEN 1 ELSE 0 END) AS td_failed_cnt,
+    SUM(a.loan_amount) AS today_loan_amt,
+    COUNT(DISTINCT a.loan_id) AS today_loan_cnt,
+    SUM(CASE WHEN a.loan_status = 'SUCCESS' THEN 1 ELSE 0 END) AS today_success_cnt,
+    SUM(CASE WHEN a.loan_status = 'FAILED' THEN 1 ELSE 0 END) AS today_failed_cnt,
 
     -- 派生指标
     SUM(a.loan_amount) / NULLIF(COUNT(DISTINCT a.loan_id), 0) AS avg_loan_amt,
     SUM(CASE WHEN a.loan_status = 'SUCCESS' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(DISTINCT a.loan_id), 0) AS success_rate,
 
     -- 逾期指标（关联 dws 层）
-    COALESCE(c.overdue_amt, 0) AS td_overdue_amt,
-    COALESCE(c.overdue_cnt, 0) AS td_overdue_cnt
+    COALESCE(c.overdue_amt, 0) AS today_overdue_amt,
+    COALESCE(c.overdue_cnt, 0) AS today_overdue_cnt
 
 FROM dwd.dwd_loan_detail a
 

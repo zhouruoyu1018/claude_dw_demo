@@ -38,19 +38,19 @@ CREATE TABLE dm.DMM_SAC_LOAN_DAILY (...)          -- 大写（应 snake_case）
 **判断逻辑**:
 1. 拆解字段名各段
 2. 检查常用词根是否匹配（amt/cnt/rat/sum/avg/max/min/loan/repay/overdue 等）
-3. 检查组装顺序是否正确（如 `is_` 在最前，`td_`/`his_` 在 `sum_`/`cnt_` 前）
+3. 检查组装顺序是否正确（如 `is_` 在最前，`today_`/`his_` 在 `sum_`/`cnt_` 前）
 
 **正例**:
 ```sql
-td_sum_loan_amt       -- td(TIME) + sum(CONVERGE) + loan(BIZ) + amt(CATEGORY)
+today_sum_loan_amt       -- td(TIME) + sum(CONVERGE) + loan(BIZ) + amt(CATEGORY)
 is_first_overdue      -- is(BOOL) + first(BIZ) + overdue(BIZ)
 his_max_overdue_days  -- his(TIME) + max(CONVERGE) + overdue(BIZ) + days(CATEGORY)
 ```
 
 **反例**:
 ```sql
-loan_amt_sum_td       -- 顺序错误，应为 td_sum_loan_amt
-total_amount          -- 未使用词根，应为 sum_loan_amt 或 td_sum_loan_amt
+loan_amt_sum_td       -- 顺序错误，应为 today_sum_loan_amt
+total_amount          -- 未使用词根，应为 sum_loan_amt 或 today_sum_loan_amt
 cnt_sum_loan          -- CONVERGE 重复，sum 和 cnt 不应同时出现
 ```
 
@@ -70,13 +70,13 @@ cnt_sum_loan          -- CONVERGE 重复，sum 和 cnt 不应同时出现
 **正例**:
 ```sql
 product_code    STRING      COMMENT '产品编码',
-td_sum_loan_amt DECIMAL(18,2) COMMENT '当日放款总金额，单位：元',
+today_sum_loan_amt DECIMAL(18,2) COMMENT '当日放款总金额，单位：元',
 ```
 
 **反例**:
 ```sql
 product_code    STRING,                           -- 无 COMMENT
-td_sum_loan_amt DECIMAL(18,2) COMMENT '',         -- 空 COMMENT
+today_sum_loan_amt DECIMAL(18,2) COMMENT '',         -- 空 COMMENT
 ```
 
 **额外检查**:
@@ -293,17 +293,17 @@ JOIN dwd.dwd_repay_detail repay
 **正例**:
 ```sql
 -- 方式 1: NULLIF
-a.td_sum_loan_amt / NULLIF(b.total_amt, 0) AS rat_loan
+a.today_sum_loan_amt / NULLIF(b.total_amt, 0) AS rat_loan
 
 -- 方式 2: CASE WHEN
 CASE WHEN b.total_amt = 0 THEN NULL
-     ELSE a.td_sum_loan_amt / b.total_amt
+     ELSE a.today_sum_loan_amt / b.total_amt
 END AS rat_loan
 ```
 
 **反例**:
 ```sql
-a.td_sum_loan_amt / b.total_amt AS rat_loan   -- 分母可能为 0
+a.today_sum_loan_amt / b.total_amt AS rat_loan   -- 分母可能为 0
 ```
 
 ---
@@ -319,7 +319,7 @@ a.td_sum_loan_amt / b.total_amt AS rat_loan   -- 分母可能为 0
 
 **正例**:
 ```sql
-COALESCE(SUM(src.loan_amount), 0) AS td_sum_loan_amt
+COALESCE(SUM(src.loan_amount), 0) AS today_sum_loan_amt
 ```
 
 **注意**: `COUNT(*)` 不会返回 NULL，无需 COALESCE。`COUNT(col)` 在 col 全为 NULL 时返回 0，通常也无需处理。重点关注 `SUM` 和 `AVG`。
@@ -340,7 +340,7 @@ COALESCE(SUM(src.loan_amount), 0) AS td_sum_loan_amt
 SELECT
     src.product_code,
     dim.product_name,
-    SUM(src.loan_amount) AS td_sum_loan_amt
+    SUM(src.loan_amount) AS today_sum_loan_amt
 FROM ...
 GROUP BY
     src.product_code,
@@ -352,7 +352,7 @@ GROUP BY
 SELECT
     src.product_code,
     dim.product_name,             -- 未在 GROUP BY 中
-    SUM(src.loan_amount) AS td_sum_loan_amt
+    SUM(src.loan_amount) AS today_sum_loan_amt
 FROM ...
 GROUP BY src.product_code         -- 缺少 dim.product_name
 ```
@@ -518,7 +518,7 @@ INSERT INTO ods.ods_raw_data ...                 -- ods 层不在工作范围
 SELECT
     src.product_code,
     src.product_name,
-    SUM(src.loan_amount) AS td_sum_loan_amt
+    SUM(src.loan_amount) AS today_sum_loan_amt
 FROM ...
 ```
 

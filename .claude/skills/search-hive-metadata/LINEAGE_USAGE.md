@@ -64,7 +64,7 @@
     "etl_logic_summary": "按产品维度聚合当日放款",
     "column_lineage": [
       {
-        "target_column": "td_sum_loan_amt",
+        "target_column": "today_sum_loan_amt",
         "source_table": "dwd.dwd_loan_detail",
         "source_column": "loan_amount",
         "transform_type": "SUM",
@@ -94,7 +94,7 @@
 
 | 操作 | 目标字段 | 来源 |
 |-----|---------|------|
-| 新增 | `td_sum_loan_amt` | `dwd.dwd_loan_detail.loan_amount` |
+| 新增 | `today_sum_loan_amt` | `dwd.dwd_loan_detail.loan_amount` |
 
 **汇总**: 表级血缘 2 条，字段级血缘 1 条
 ```
@@ -152,7 +152,7 @@
 | 目标字段 | 来源表.字段 | 转换类型 | 表达式 |
 |---------|------------|---------|--------|
 | `product_code` | `dwd.dwd_loan_detail.product_code` | DIRECT | product_code |
-| `td_sum_loan_amt` | `dwd.dwd_loan_detail.loan_amount` | SUM | SUM(loan_amount) |
+| `today_sum_loan_amt` | `dwd.dwd_loan_detail.loan_amount` | SUM | SUM(loan_amount) |
 ```
 
 ---

@@ -44,7 +44,7 @@ Skill 会展示：
    ...
 
 3️⃣ 识别的指标
-   - td_loan_amt (当日放款金额) - 金额 - 原子指标
+   - today_loan_amt (当日放款金额) - 金额 - 原子指标
    ...
 ```
 
@@ -77,7 +77,7 @@ Claude 会询问：
 **预期输出**:
 - 目标表: `ph_sac_dmm.dmm_sac_loan_prod_daily`
 - 源表: 3 张（dwd.dwd_loan_detail, dwd.dwd_product_info, dws.dws_overdue_summary）
-- 识别指标: 8 个（td_loan_amt, td_loan_cnt, avg_loan_amt, success_rate 等）
+- 识别指标: 8 个（today_loan_amt, today_loan_cnt, avg_loan_amt, success_rate 等）
 
 ### 示例 2: 批量分析 dm 层
 

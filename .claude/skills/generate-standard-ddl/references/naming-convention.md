@@ -126,18 +126,21 @@ ORDER BY word_root;
 
 #### 时间范围（第2段）
 
-| 前缀 | 含义 | 示例 |
-|------|------|------|
-| `td_` | 当日 (today) | `td_sum_loan_amt` |
-| `yd_` | 昨日 (yesterday) | `yd_sum_repay_amt` |
-| `cur_wk_` | 当周 | `cur_wk_cnt_apply` |
-| `cur_mon_` | 当月 | `cur_mon_sum_loan_amt` |
-| `cur_qtr_` | 当季 | `cur_qtr_sum_loan_amt` |
-| `cur_yr_` | 当年 | `cur_yr_sum_loan_amt` |
-| `his_` | 历史累计 | `his_max_overdue_days` |
-| `lst_` | 最近一次 | `lst_repay_date` |
-| `p{N}d_` | 过去N天 | `p30d_cnt_repay` |
-| `p{N}m_` | 过去N月 | `p3m_avg_loan_amt` |
+> **重要**: 时间前缀必须使用词根表 (`word_root_dict`) 中 `tag=TIME` 的 `english_abbr`。
+> 下表中标注 ✅ 的已入库词根，标注 ⚠️ 的尚未入库，使用前须先调用 `search_word_root` 确认或登记新词根。
+
+| 前缀 | 含义 | 示例 | 词根状态 |
+|------|------|------|---------|
+| `today_` | 当日 (today) | `today_sum_loan_amt` | ✅ `today` |
+| `yestd_` | 昨日 (yesterday) | `yestd_sum_repay_amt` | ✅ `yestd` |
+| `curr_mth_` | 当月 (current month) | `curr_mth_sum_loan_amt` | ✅ `curr_mth` |
+| `curr_` | 当前 (current) | `curr_bal` | ✅ `curr` |
+| `qtr_` | 季度 (quarter) | `qtr_sum_loan_amt` | ✅ `qtr` |
+| `last_year_` | 去年 (last year) | `last_year_sum_loan_amt` | ✅ `last_year` |
+| `latest_1m_` | 近1月 | `latest_1m_cnt_repay` | ✅ `latest_1m` |
+| `latest_3m_` | 近3月 | `latest_3m_avg_loan_amt` | ✅ `latest_3m` |
+| `p{N}d_` | 过去N天 | `p30d_cnt_repay` | ⚠️ 须查词根 |
+| `his_` | 历史累计 | `his_max_overdue_days` | ⚠️ 须查词根 |
 
 #### 聚合方式（第3段）
 
@@ -185,7 +188,17 @@ ORDER BY word_root;
 
 ---
 
-## 4. 字段排序规范
+## 4. 常见违规模式（必须拦截）
+
+| 违规模式 | 错误示例 | 正确写法 | 说明 |
+|---------|----------|----------|------|
+| CATEGORY_WORD 不在末尾 | `mtd_m0_enr` | `m0_enr_mtd` | mtd/ytd 是 CATEGORY_WORD，必须在末尾 |
+| TIME 不在开头 | `loan_today_sum_amt` | `today_sum_loan_amt` | today 是 TIME，应在 CONVERGE 之前 |
+| CONVERGE 在 BIZ_ENTITY 之后 | `today_loan_sum_amt` | `today_sum_loan_amt` | sum 是 CONVERGE，应在 BIZ_ENTITY 之前 |
+
+---
+
+## 5. 字段排序规范
 
 DDL 中字段按以下分组排列，组内按字母序：
 
@@ -200,14 +213,18 @@ DDL 中字段按以下分组排列，组内按字母序：
 第2组: 布尔字段（is_ / has_ 开头）
 
 第3组: 时间类指标（按时间窗口从小到大）
-  ├── td_（当日）
-  ├── cur_mon_（当月）
-  ├── cur_yr_（当年）
-  ├── p{N}d_ / p{N}m_（过去N天/月）
+  ├── today_（当日）
+  ├── yestd_（昨日）
+  ├── curr_mth_（当月）
+  ├── qtr_（季度）
+  ├── latest_{N}m_（近N月）
+  ├── p{N}d_（过去N天）
   └── his_（历史）
 
 第4组: 无时间前缀的聚合指标
   ├── sum_
+  ├── tot_
+  ├── cum_
   ├── cnt_
   ├── avg_
   ├── max_

@@ -8,8 +8,8 @@ DML 脚本中的 `SELECT` 别名不一定等于目标表的实际字段名：
 INSERT OVERWRITE TABLE dm.dmm_loan_daily PARTITION (dt='2024-01-01')
 SELECT
     a.stat_date AS report_date,        -- 目标表实际字段: dt
-    SUM(loan_amt) AS total_amount,     -- 目标表实际字段: td_loan_amt
-    COUNT(1) AS cnt                    -- 目标表实际字段: td_loan_cnt
+    SUM(loan_amt) AS total_amount,     -- 目标表实际字段: today_loan_amt
+    COUNT(1) AS cnt                    -- 目标表实际字段: today_loan_cnt
 FROM dwd.dwd_loan_detail a
 ```
 
@@ -59,8 +59,8 @@ SELECT 第 2 个字段 → 目标表第 2 个字段
 ┌────────────────────────────┐
 │ Step 4: 替换字段名          │
 │ - report_date → dt         │
-│ - total_amount → td_loan_amt│
-│ - cnt → td_loan_cnt        │
+│ - total_amount → today_loan_amt│
+│ - cnt → today_loan_cnt        │
 └────────────────────────────┘
 ```
 
@@ -159,8 +159,8 @@ GROUP BY a.stat_date
   "table_name": "dm.dmm_loan_daily",
   "columns": [
     {"column_name": "dt", "data_type": "STRING"},
-    {"column_name": "td_loan_amt", "data_type": "DECIMAL(20,2)"},
-    {"column_name": "td_loan_cnt", "data_type": "BIGINT"}
+    {"column_name": "today_loan_amt", "data_type": "DECIMAL(20,2)"},
+    {"column_name": "today_loan_cnt", "data_type": "BIGINT"}
   ]
 }
 ```
@@ -169,8 +169,8 @@ GROUP BY a.stat_date
 
 ```
 🔀 字段对齐: report_date → dt
-🔀 字段对齐: total_amount → td_loan_amt
-🔀 字段对齐: cnt → td_loan_cnt
+🔀 字段对齐: total_amount → today_loan_amt
+🔀 字段对齐: cnt → today_loan_cnt
 ```
 
 ### 最终输出
@@ -185,12 +185,12 @@ GROUP BY a.stat_date
       "transform_type": "DIRECT"
     },
     {
-      "target_column": "td_loan_amt",  // ✅ 已替换
+      "target_column": "today_loan_amt",  // ✅ 已替换
       "source_column": "loan_amt",
       "transform_type": "SUM"
     },
     {
-      "target_column": "td_loan_cnt",  // ✅ 已替换
+      "target_column": "today_loan_cnt",  // ✅ 已替换
       "transform_type": "COUNT"
     }
   ]
@@ -219,7 +219,7 @@ GROUP BY a.stat_date
 ```python
 ⚠️ 字段数量不匹配: SQL 8 vs 目标表 5
    SQL 字段: [report_date, total_amount, cnt, ...]
-   目标表字段: [dt, td_loan_amt, td_loan_cnt, product_id, product_name]
+   目标表字段: [dt, today_loan_amt, today_loan_cnt, product_id, product_name]
 ℹ️ 跳过字段对齐，使用 SQL 别名
 ```
 
@@ -301,12 +301,12 @@ parser = SQLParser(
 ┌─────────────────────────────────────────┐
 │  指标识别                                │
 │  - 基于真实字段名推断指标                │
-│  - 示例: td_loan_amt → 当日放款金额      │
+│  - 示例: today_loan_amt → 当日放款金额      │
 └────────────┬────────────────────────────┘
              ↓
 ┌─────────────────────────────────────────┐
 │  指标去重检查                            │
-│  - search_existing_indicators(td_loan_amt)│
+│  - search_existing_indicators(today_loan_amt)│
 │  - 避免重复注册                          │
 └────────────┬────────────────────────────┘
              ↓
@@ -340,7 +340,7 @@ parser = SQLParser(
 
 ```
 🔀 字段对齐: report_date → dt
-🔀 字段对齐: total_amount → td_loan_amt
+🔀 字段对齐: total_amount → today_loan_amt
 ```
 
 如果输出为空，说明：
@@ -355,7 +355,7 @@ parser = SQLParser(
 parser = SQLParser(
     sql_content=sql_text,
     mcp_client=mcp_client,
-    custom_mapping={'report_date': 'dt', 'total_amount': 'td_loan_amt'}  # 手动映射
+    custom_mapping={'report_date': 'dt', 'total_amount': 'today_loan_amt'}  # 手动映射
 )
 ```
 

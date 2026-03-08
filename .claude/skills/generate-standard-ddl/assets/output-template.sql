@@ -36,10 +36,10 @@ CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
     {is_xxx}              TINYINT         COMMENT '是否{描述}，0-否 1-是',
 
     -- ===== 指标字段 =====
-    {td_sum_xxx}          DECIMAL(18,2)   COMMENT '当日{描述}，单位：元',
-    {td_cnt_xxx}          BIGINT          COMMENT '当日{描述}',
-    {cur_mon_sum_xxx}     DECIMAL(18,2)   COMMENT '当月累计{描述}，单位：元',
-    {his_max_xxx}         INT             COMMENT '历史最大{描述}',
+    {today_sum_xxx}       DECIMAL(18,2)   COMMENT '当日{描述}，单位：元',
+    {today_cnt_xxx}       BIGINT          COMMENT '当日{描述}',
+    {curr_mth_sum_xxx}    DECIMAL(18,2)   COMMENT '当月累计{描述}，单位：元',
+    {his_max_xxx}         INT             COMMENT '历史最大{描述}',  -- ⚠️ his_ 尚未入库词根，使用前须 search_word_root 确认
     {rat_xxx}             DECIMAL(10,4)   COMMENT '{描述}={分子}/{分母}'
 )
 COMMENT '{业务含义}，{更新频率}[粒度:{col1},{col2},stat_date]'

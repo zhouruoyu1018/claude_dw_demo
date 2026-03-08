@@ -75,11 +75,11 @@ ETL SQL + DDL + 业务需求
 | 逻辑主键 | DDL TBLPROPERTIES `logical_primary_key` | `product_code, stat_date` |
 | 分区字段 | DDL `PARTITIONED BY` | `stat_date` |
 | 维度字段 | DDL 注释分组"维度字段" | `product_code`, `product_name` |
-| 指标字段 | DDL 注释分组"指标字段" | `td_sum_loan_amt`, `td_cnt_loan` |
+| 指标字段 | DDL 注释分组"指标字段" | `today_sum_loan_amt`, `today_cnt_loan` |
 | 布尔字段 | `is_` / `has_` 前缀 | `is_first_overdue` |
-| 金额字段 | 类型 `DECIMAL(18,2)` + COMMENT 含"金额" | `td_sum_loan_amt` |
+| 金额字段 | 类型 `DECIMAL(18,2)` + COMMENT 含"金额" | `today_sum_loan_amt` |
 | 比率字段 | 类型 `DECIMAL(10,4)` + COMMENT 含"率" | `rat_overdue_m1` |
-| 计数字段 | 类型 `BIGINT` + COMMENT 含"笔数/件数" | `td_cnt_loan` |
+| 计数字段 | 类型 `BIGINT` + COMMENT 含"笔数/件数" | `today_cnt_loan` |
 | 引擎类型 | 脚本 SET 参数或用户指定 | Hive / Impala / Doris |
 | 脚本类型 | 文件名 `_init.sql` 或动态分区特征 | 增量 / 初始化 |
 
@@ -370,8 +370,8 @@ WHERE u.{dim_key} IS NULL;
 |------|------|---------|
 | `product_code, stat_date` | 逻辑主键 | DQC-U01 |
 | `product_code` | 维度编码 `_code` | DQC-C02, DQC-CS01 |
-| `td_sum_loan_amt` | 金额 `DECIMAL` + `_amt` | DQC-V01, DQC-VOL02 |
-| `td_cnt_loan` | 计数 `BIGINT` + `_cnt` | DQC-V04 |
+| `today_sum_loan_amt` | 金额 `DECIMAL` + `_amt` | DQC-V01, DQC-VOL02 |
+| `today_cnt_loan` | 计数 `BIGINT` + `_cnt` | DQC-V04 |
 | `is_first_loan` | 布尔 `TINYINT` + `is_` | DQC-V03 |
 | `rat_overdue_m1` | 比率 `DECIMAL(10,4)` + `rat_` | DQC-V02 |
 | 全表 | — | S-01, S-02, DQC-VOL01 |

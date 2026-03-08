@@ -193,8 +193,8 @@ INSERT INTO column_lineage (target_table, target_column, source_table, source_co
 VALUES
 ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_code', 'dwd.dwd_loan_detail', 'product_code', 'DIRECT', 'product_code'),
 ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_name', 'dim.dim_product', 'product_name', 'DIRECT', 'product_name'),
-('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)'),
-('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)');
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)'),
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)');
 ```
 
 ## 常用血缘查询
@@ -223,7 +223,7 @@ WHERE source_table = 'dwd.dwd_loan_detail'
 SELECT source_table, source_column, transform_type, transform_expr
 FROM column_lineage
 WHERE target_table = 'ph_sac_dmm.dmm_sac_loan_prod_daily'
-  AND target_column = 'td_sum_loan_amt';
+  AND target_column = 'today_sum_loan_amt';
 ```
 
 ### 查询某字段的影响范围（字段影响分析）
@@ -311,7 +311,7 @@ CREATE TABLE IF NOT EXISTS indicator_registry (
 |-------|------|------|-----|------|
 | indicator_code | varchar(50) | 必填，唯一 | 指标编码 | `IDX_LOAN_001` |
 | indicator_name | varchar(50) | 必填，唯一 | 业务指标名称 | `当日放款金额` |
-| indicator_english_name | varchar(50) | 必填 | 英文名/物理字段名 | `td_loan_amt` |
+| indicator_english_name | varchar(50) | 必填 | 英文名/物理字段名 | `today_loan_amt` |
 | indicator_alias | varchar(50) | 可选 | 指标别名 | `放款额` |
 | indicator_category | varchar(20) | 必填 | 指标分类 | `原子指标`/`派生指标`/`复合指标` |
 | business_domain | varchar(20) | 必填 | 业务域 | `贷款`/`风控`/`营销` |

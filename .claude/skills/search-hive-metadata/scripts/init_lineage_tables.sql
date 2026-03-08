@@ -140,23 +140,23 @@ INSERT INTO column_lineage (target_table, target_column, source_table, source_co
 VALUES
 ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_code', 'dwd.dwd_loan_detail', 'product_code', 'DIRECT', 'product_code', 1),
 ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_name', 'dim.dim_product', 'product_name', 'DIRECT', 'product_name', 2),
-('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)', 1),
-('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)', 1),
-('ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_diff_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'CUSTOM', 'SUM(loan_amount) - LAG(SUM(loan_amount))', 1);
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)', 1),
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)', 1),
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_diff_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'CUSTOM', 'SUM(loan_amount) - LAG(SUM(loan_amount))', 1);
 
 -- ph_sac_dmm.dmm_sac_loan_chn_daily 的字段血缘
 INSERT INTO column_lineage (target_table, target_column, source_table, source_column, transform_type, transform_expr, table_lineage_id)
 VALUES
 ('ph_sac_dmm.dmm_sac_loan_chn_daily', 'channel_code', 'dwd.dwd_loan_detail', 'channel_code', 'DIRECT', 'channel_code', 3),
 ('ph_sac_dmm.dmm_sac_loan_chn_daily', 'channel_name', 'dim.dim_channel', 'channel_name', 'DIRECT', 'channel_name', 4),
-('ph_sac_dmm.dmm_sac_loan_chn_daily', 'td_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)', 3),
-('ph_sac_dmm.dmm_sac_loan_chn_daily', 'td_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)', 3);
+('ph_sac_dmm.dmm_sac_loan_chn_daily', 'today_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)', 3),
+('ph_sac_dmm.dmm_sac_loan_chn_daily', 'today_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)', 3);
 
 -- ph_sac_da.da_loan_report 的字段血缘
 INSERT INTO column_lineage (target_table, target_column, source_table, source_column, transform_type, transform_expr, table_lineage_id)
 VALUES
-('ph_sac_da.da_loan_report', 'total_loan_amt', 'ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_sum_loan_amt', 'SUM', 'SUM(td_sum_loan_amt)', 5),
-('ph_sac_da.da_loan_report', 'total_loan_cnt', 'ph_sac_dmm.dmm_sac_loan_prod_daily', 'td_cnt_loan', 'SUM', 'SUM(td_cnt_loan)', 5);
+('ph_sac_da.da_loan_report', 'total_loan_amt', 'ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_sum_loan_amt', 'SUM', 'SUM(today_sum_loan_amt)', 5),
+('ph_sac_da.da_loan_report', 'total_loan_cnt', 'ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_cnt_loan', 'SUM', 'SUM(today_cnt_loan)', 5);
 
 -- ============================================================
 -- 5. 验证数据

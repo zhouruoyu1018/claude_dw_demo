@@ -74,7 +74,7 @@
 
 ```json
 {
-  "target_column": "td_loan_amt",
+  "target_column": "today_loan_amt",
   "source_table": "dwd.dwd_loan_detail",
   "source_column": "loan_amount",
   "transform_type": "SUM",
@@ -96,8 +96,8 @@
 
 | 字段名模式          | 推断为         | 示例                  |
 |-------------------|---------------|----------------------|
-| `*_amt`, `*_amount`| 金额类指标     | td_loan_amt          |
-| `*_cnt`, `*_count` | 数量类指标     | td_loan_cnt          |
+| `*_amt`, `*_amount`| 金额类指标     | today_loan_amt          |
+| `*_cnt`, `*_count` | 数量类指标     | today_loan_cnt          |
 | `*_rate`, `*_pct`  | 比率类指标     | success_rate         |
 | `avg_*`, `mean_*`  | 平均值指标     | avg_loan_amt         |
 
@@ -131,8 +131,8 @@ else:
 
 | 指标英文名       | 指标中文名（待确认） | 计算逻辑              | 标准类型 |
 |-----------------|---------------------|----------------------|---------|
-| td_loan_amt     | 当日[loan][amt]     | SUM(loan_amount)      | 金额    |
-| td_loan_cnt     | 当日[loan][cnt]     | COUNT(DISTINCT ...)   | 数量    |
+| today_loan_amt     | 当日[loan][amt]     | SUM(loan_amount)      | 金额    |
+| today_loan_cnt     | 当日[loan][cnt]     | COUNT(DISTINCT ...)   | 数量    |
 | success_rate    | [success][rate]     | ... * 100.0 / ...     | 比率    |
 
 > ⚠️ 中文名由系统推断，**请务必核对修正**！
@@ -153,8 +153,8 @@ else:
 #### 修改指标交互（如果用户选择 "修改指标"）
 
 ```
-请输入要修改的指标英文名（如 td_loan_amt）：
-> td_loan_amt
+请输入要修改的指标英文名（如 today_loan_amt）：
+> today_loan_amt
 
 当前信息：
   中文名: 当日[loan][amt]
@@ -215,7 +215,7 @@ register_lineage(
     source_tables=[...],  # 同上
     column_lineage=[
         {
-            'target_column': 'td_loan_amt',
+            'target_column': 'today_loan_amt',
             'source_table': 'dwd.dwd_loan_detail',
             'source_column': 'loan_amount',
             'transform_type': 'SUM',
@@ -231,7 +231,7 @@ register_indicator(
         {
             'indicator_code': 'IDX_LOAN_001',  # 自动生成
             'indicator_name': '当日放款金额',
-            'indicator_english_name': 'td_loan_amt',
+            'indicator_english_name': 'today_loan_amt',
             'calculation_logic': 'SUM(loan_amount)',
             'statistical_caliber': '统计当日所有成功放款的金额总和',
             'business_domain': '贷款',
@@ -372,7 +372,7 @@ register_indicator(
   ],
   "column_lineage": [
     {
-      "target_column": "td_loan_amt",
+      "target_column": "today_loan_amt",
       "source_table": "dwd.dwd_loan_detail",
       "source_column": "loan_amount",
       "transform_type": "SUM",
@@ -392,7 +392,7 @@ register_indicator(
     {
       "indicator_code": "IDX_LOAN_001",
       "indicator_name": "当日放款金额",
-      "indicator_english_name": "td_loan_amt",
+      "indicator_english_name": "today_loan_amt",
       "calculation_logic": "SUM(loan_amount)",
       "statistical_caliber": "统计当日所有成功放款的金额总和",
       "business_domain": "贷款",
