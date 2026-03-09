@@ -199,7 +199,7 @@ SELECT
     dt,
     product_code,
     SUM(loan_amount) AS sum_loan_amt,
-    COUNT(loan_id) AS cnt_loan
+    COUNT(loan_id) AS loan_cnt
 FROM ph_dm_sac_drs.dmm_sac_loan_prod_daily
 GROUP BY dt, product_code;
 ```

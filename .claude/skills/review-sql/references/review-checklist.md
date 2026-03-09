@@ -181,7 +181,7 @@ PARTITIONED BY (data_date VARCHAR(10))-- 非标准名称和类型
 |---------|---------|
 | 字段名含 `_amt` / `_bal` / `_prin` | `DECIMAL(18,2)` |
 | 字段名含 `_cnt` | `BIGINT` |
-| 字段名含 `_rat` / `_rate` | `DECIMAL(10,4)` |
+| 字段名含 `_rate` | `DECIMAL(10,4)` |
 | 字段名以 `is_` / `has_` 开头 | `TINYINT` |
 | 字段名含 `_days` | `INT` |
 | 字段名含 `_id` | `BIGINT` 或 `STRING` |
@@ -288,7 +288,7 @@ JOIN dwd.dwd_repay_detail repay
 **判断逻辑**:
 1. 搜索除法运算符 `/`
 2. 检查分母是否有 `NULLIF(..., 0)` 或 `CASE WHEN ... = 0 THEN NULL` 保护
-3. 比率字段（_rat/_rate）尤其关注
+3. 比率字段（`_rate`）尤其关注
 
 **正例**:
 ```sql

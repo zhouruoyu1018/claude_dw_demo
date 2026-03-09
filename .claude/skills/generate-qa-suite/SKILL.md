@@ -75,11 +75,11 @@ ETL SQL + DDL + 业务需求
 | 逻辑主键 | DDL TBLPROPERTIES `logical_primary_key` | `product_code, stat_date` |
 | 分区字段 | DDL `PARTITIONED BY` | `stat_date` |
 | 维度字段 | DDL 注释分组"维度字段" | `product_code`, `product_name` |
-| 指标字段 | DDL 注释分组"指标字段" | `today_sum_loan_amt`, `today_cnt_loan` |
+| 指标字段 | DDL 注释分组"指标字段" | `today_sum_loan_amt`, `today_loan_cnt` |
 | 布尔字段 | `is_` / `has_` 前缀 | `is_first_overdue` |
 | 金额字段 | 类型 `DECIMAL(18,2)` + COMMENT 含"金额" | `today_sum_loan_amt` |
-| 比率字段 | 类型 `DECIMAL(10,4)` + COMMENT 含"率" | `rat_overdue_m1` |
-| 计数字段 | 类型 `BIGINT` + COMMENT 含"笔数/件数" | `today_cnt_loan` |
+| 比率字段 | 类型 `DECIMAL(10,4)` + COMMENT 含"率" | `m1_overdue_rate` |
+| 计数字段 | 类型 `BIGINT` + COMMENT 含"笔数/件数" | `today_loan_cnt` |
 | 引擎类型 | 脚本 SET 参数或用户指定 | Hive / Impala / Doris |
 | 脚本类型 | 文件名 `_init.sql` 或动态分区特征 | 增量 / 初始化 |
 
@@ -205,7 +205,7 @@ DQC 规则是系统化的质量检查，可接入调度平台（如 Airflow、Do
 |---------|---------------|
 | 逻辑主键 (`logical_primary_key`) | 唯一性检查 |
 | 金额字段 (`DECIMAL` + `_amt`) | 非负检查、合理范围检查 |
-| 比率字段 (`DECIMAL` + `_rat`/`_rate`) | [0, 1] 范围检查 |
+| 比率字段 (`DECIMAL` + `_rate`) | [0, 1] 范围检查 |
 | 计数字段 (`BIGINT` + `_cnt`) | 非负检查 |
 | 布尔字段 (`TINYINT` + `is_`/`has_`) | {0, 1} 枚举检查 |
 | 日期字段 (`STRING` + `_date`) | 格式检查（YYYY-MM-DD） |
@@ -224,7 +224,7 @@ DQC 规则是系统化的质量检查，可接入调度平台（如 Airflow、Do
 | 完整性 | DQC-C03 | 非空串 | STRING 类型维度字段 |
 | 唯一性 | DQC-U01 | 主键唯一 | `logical_primary_key` |
 | 有效性 | DQC-V01 | 非负 | 金额 `DECIMAL` + `_amt` |
-| 有效性 | DQC-V02 | 范围 [0,1] | 比率 `DECIMAL` + `_rat` |
+| 有效性 | DQC-V02 | 范围 [0,1] | 比率 `DECIMAL` + `_rate` |
 | 有效性 | DQC-V03 | 枚举 {0,1} | 布尔 `TINYINT` + `is_`/`has_` |
 | 有效性 | DQC-V04 | 非负 | 计数 `BIGINT` + `_cnt` |
 | 有效性 | DQC-V05 | 日期格式 | `STRING` + `_date` |
@@ -371,9 +371,9 @@ WHERE u.{dim_key} IS NULL;
 | `product_code, stat_date` | 逻辑主键 | DQC-U01 |
 | `product_code` | 维度编码 `_code` | DQC-C02, DQC-CS01 |
 | `today_sum_loan_amt` | 金额 `DECIMAL` + `_amt` | DQC-V01, DQC-VOL02 |
-| `today_cnt_loan` | 计数 `BIGINT` + `_cnt` | DQC-V04 |
+| `today_loan_cnt` | 计数 `BIGINT` + `_cnt` | DQC-V04 |
 | `is_first_loan` | 布尔 `TINYINT` + `is_` | DQC-V03 |
-| `rat_overdue_m1` | 比率 `DECIMAL(10,4)` + `rat_` | DQC-V02 |
+| `m1_overdue_rate` | 比率 `DECIMAL(10,4)` + `_rate` | DQC-V02 |
 | 全表 | — | S-01, S-02, DQC-VOL01 |
 
 根据匹配结果，自动生成包含 Part 1 冒烟测试 (S-01~S-06) + Part 2 DQC 规则的完整 SQL 脚本。
@@ -404,7 +404,7 @@ WHERE u.{dim_key} IS NULL;
 
 1. **波动阈值**: "行数/指标波动超过多少算异常？默认行数 50%、指标 100%，需要调整吗？"
 
-2. **比率范围**: "字段 `rat_overdue_m1` 默认检查 [0, 1] 范围。该比率是否可能超过 1（如以百分比存储）？"
+2. **比率范围**: "字段 `m1_overdue_rate` 默认检查 [0, 1] 范围。该比率是否可能超过 1（如以百分比存储）？"
 
 3. **引用完整性**: "`product_code` 应关联哪张维度表做引用完整性检查？"
 

@@ -52,7 +52,7 @@
 **示例:**
 ```json
 search_word_root_batch({
-  "keywords": ["今天", "汇总", "放款", "金额", "计数"],
+  "keywords": ["今天", "汇总", "放款", "金额", "数量"],
   "limit_per_keyword": 3
 })
 ```
@@ -65,7 +65,7 @@ search_word_root_batch({
     "汇总": [{"english_abbr": "sum", "chinese_name": "汇总", "tag": "CONVERGE", "match_level": "exact"}],
     "放款": [{"english_abbr": "loan", "chinese_name": "放款/贷款", "tag": "BIZ_ENTITY", "match_level": "exact"}],
     "金额": [{"english_abbr": "amt", "chinese_name": "金额", "tag": "CATEGORY_WORD", "match_level": "exact"}],
-    "计数": [{"english_abbr": "cnt", "chinese_name": "件数/笔数", "tag": "CONVERGE", "match_level": "exact"}]
+    "数量": [{"english_abbr": "cnt", "chinese_name": "数量", "tag": "CATEGORY_WORD", "match_level": "exact"}]
   },
   "total_keywords": 5,
   "matched_keywords": 5,
@@ -146,11 +146,11 @@ validate_field_names({
       ]
     },
     {
-      "field_name": "today_cnt_loan",
+      "field_name": "today_loan_cnt",
       "expected_units": [
         {"semantic_unit": "今天", "english_abbr": "today", "tag": "TIME"},
-        {"semantic_unit": "计数", "english_abbr": "cnt", "tag": "CONVERGE"},
-        {"semantic_unit": "放款", "english_abbr": "loan", "tag": "BIZ_ENTITY"}
+        {"semantic_unit": "放款", "english_abbr": "loan", "tag": "BIZ_ENTITY"},
+        {"semantic_unit": "数量", "english_abbr": "cnt", "tag": "CATEGORY_WORD"}
       ]
     }
   ],
@@ -342,7 +342,7 @@ register_indicator({
         {
             "indicator_code": "IDX_LOAN_002",
             "indicator_name": "当日放款笔数",
-            "indicator_english_name": "today_cnt_loan",
+            "indicator_english_name": "today_loan_cnt",
             "indicator_category": "原子指标",
             "business_domain": "贷款",
             "data_type": "BIGINT",

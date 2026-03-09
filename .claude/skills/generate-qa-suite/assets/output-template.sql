@@ -103,10 +103,10 @@ SELECT 'DQC-V01' AS rule_id, '{amt_col}' AS target,
             THEN 'PASS' ELSE 'FAIL' END AS result
 FROM {target_table} WHERE dt = '${hivevar:dt}';
 
--- [DQC-V02] {rat_col} 范围 [0,1]
-SELECT 'DQC-V02' AS rule_id, '{rat_col}' AS target,
-       SUM(CASE WHEN {rat_col} < 0 OR {rat_col} > 1 THEN 1 ELSE 0 END) AS out_cnt,
-       CASE WHEN SUM(CASE WHEN {rat_col} < 0 OR {rat_col} > 1 THEN 1 ELSE 0 END) = 0
+-- [DQC-V02] {ratio_col} 范围 [0,1]
+SELECT 'DQC-V02' AS rule_id, '{ratio_col}' AS target,
+       SUM(CASE WHEN {ratio_col} < 0 OR {ratio_col} > 1 THEN 1 ELSE 0 END) AS out_cnt,
+       CASE WHEN SUM(CASE WHEN {ratio_col} < 0 OR {ratio_col} > 1 THEN 1 ELSE 0 END) = 0
             THEN 'PASS' ELSE 'FAIL' END AS result
 FROM {target_table} WHERE dt = '${hivevar:dt}';
 

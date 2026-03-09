@@ -6,7 +6,7 @@
 
 **源表：** `dwd.dwd_loan_detail` (loan_id, product_code, loan_amount, loan_date, stat_date)
 
-**目标表：** `ph_sac_dmm.dmm_sac_loan_prod_daily` (product_code, product_name, today_sum_loan_amt, today_cnt_loan, today_diff_loan_amt, stat_date)
+**目标表：** `ph_sac_dmm.dmm_sac_loan_prod_daily` (product_code, product_name, today_sum_loan_amt, today_loan_cnt, today_diff_loan_amt, stat_date)
 
 ```sql
 -- ============================================================
@@ -35,7 +35,7 @@ agg AS (
     SELECT
         src.product_code,
         SUM(src.loan_amount)             AS today_sum_loan_amt,
-        COUNT(src.loan_id)               AS today_cnt_loan
+        COUNT(src.loan_id)               AS today_loan_cnt
     FROM dwd.dwd_loan_detail src
     WHERE src.stat_date = '${hivevar:stat_date}'
     GROUP BY src.product_code
@@ -59,7 +59,7 @@ SELECT
 
     -- ===== 指标字段 =====
     COALESCE(a.today_sum_loan_amt, 0)       AS today_sum_loan_amt,    -- 当日放款总金额
-    COALESCE(a.today_cnt_loan, 0)           AS today_cnt_loan,        -- 当日放款笔数
+    COALESCE(a.today_loan_cnt, 0)           AS today_loan_cnt,        -- 当日放款笔数
     COALESCE(a.today_sum_loan_amt, 0)
         - COALESCE(ap.yd_sum_loan_amt, 0)
                                          AS today_diff_loan_amt,   -- 日环比差值
@@ -132,7 +132,7 @@ agg AS (
         src.stat_date,                           -- 新增：分区字段
         src.product_code,
         SUM(src.loan_amount)             AS today_sum_loan_amt,
-        COUNT(src.loan_id)               AS today_cnt_loan
+        COUNT(src.loan_id)               AS today_loan_cnt
     FROM dwd.dwd_loan_detail src
     WHERE src.stat_date BETWEEN '${hivevar:start_date}' AND '${hivevar:end_date}'  -- 时间范围过滤
     GROUP BY src.stat_date, src.product_code   -- 新增：stat_date 分组
@@ -143,7 +143,7 @@ agg_with_prev AS (
         stat_date,
         product_code,
         today_sum_loan_amt,
-        today_cnt_loan,
+        today_loan_cnt,
         LAG(today_sum_loan_amt, 1) OVER (PARTITION BY product_code ORDER BY stat_date) AS yd_sum_loan_amt
     FROM agg
 )
@@ -157,7 +157,7 @@ SELECT
 
     -- ===== 指标字段 =====
     COALESCE(a.today_sum_loan_amt, 0)       AS today_sum_loan_amt,    -- 当日放款总金额
-    COALESCE(a.today_cnt_loan, 0)           AS today_cnt_loan,        -- 当日放款笔数
+    COALESCE(a.today_loan_cnt, 0)           AS today_loan_cnt,        -- 当日放款笔数
     COALESCE(a.today_sum_loan_amt, 0)
         - COALESCE(a.yd_sum_loan_amt, 0)
                                          AS today_diff_loan_amt,   -- 日环比差值

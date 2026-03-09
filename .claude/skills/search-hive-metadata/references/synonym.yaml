@@ -334,15 +334,15 @@ synonyms:
     - 贷款本金
     - 应还本金
     - principal
-    - prin
-    - prin_amt
+    - princ
+    - princ_amt
   利息:
     - 利息
     - 贷款利息
     - 应还利息
     - interest
-    - int
-    - int_amt
+    - intr
+    - intr_amt
   罚息:
     - 罚息
     - 逾期利息

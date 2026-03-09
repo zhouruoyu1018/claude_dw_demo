@@ -194,7 +194,7 @@ VALUES
 ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_code', 'dwd.dwd_loan_detail', 'product_code', 'DIRECT', 'product_code'),
 ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'product_name', 'dim.dim_product', 'product_name', 'DIRECT', 'product_name'),
 ('ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_sum_loan_amt', 'dwd.dwd_loan_detail', 'loan_amount', 'SUM', 'SUM(loan_amount)'),
-('ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_cnt_loan', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)');
+('ph_sac_dmm.dmm_sac_loan_prod_daily', 'today_loan_cnt', 'dwd.dwd_loan_detail', 'loan_id', 'COUNT', 'COUNT(loan_id)');
 ```
 
 ## 常用血缘查询

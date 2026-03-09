@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
     -- ===== 指标字段 =====
     {metric_col}       {TYPE}          COMMENT '{注释}'
     -- 时间前缀示例: today_(当日), yestd_(昨日), curr_mth_(当月), his_(历史⚠️未入库)
-    -- 聚合前缀示例: sum_, cnt_, avg_, max_, min_, rat_
+    -- 聚合前缀示例(CONVERGE): sum_, avg_, max_, min_, tot_, cum_
+    -- 分类后缀示例(CATEGORY_WORD): _amt, _cnt, _days, _bal, _fee, _ytd, _mtd
 )
 COMMENT '{业务含义}，{更新频率}[粒度:{col1},{col2},stat_date]'
 PARTITIONED BY (stat_date STRING COMMENT '数据日期，格式YYYY-MM-DD')
@@ -316,7 +317,7 @@ PROPERTIES (
 | 0 | 请求分型 | 用户给需求字段清单 → `full_design` |
 | 1 | 确定分层与表名 | dm → `dmm_sac_loan_prod_daily` |
 | 2 | 建模决策 | 未找到同粒度同主题表 → CASE B 新建 |
-| 3 | 语义拆分→词根查询→assemble→validate | `today_sum_loan_amt`, `today_cnt_loan`, `today_avg_credit_amt` |
+| 3 | 语义拆分→词根查询→assemble→validate | `today_sum_loan_amt`, `today_loan_cnt`, `today_avg_credit_amt` |
 | 4 | 排序 + 类型 | DM 层 → 规范 B（DECIMAL(38,10) / STRING） |
 | 5 | 生成 DDL | CREATE TABLE + TBLPROPERTIES（含 logical_primary_key） |
 

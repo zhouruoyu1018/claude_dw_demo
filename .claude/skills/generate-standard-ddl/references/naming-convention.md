@@ -40,25 +40,27 @@ ORDER BY word_root;
 | `collect` | 催收 | 贷后管理 |
 | `writeoff` | 核销 | 贷后管理 |
 | `amt` | 金额 | 度量 |
-| `prin` | 本金 | 度量 |
-| `int` | 利息 | 度量 |
+| `princ` | 本金 | 度量 |
+| `intr` | 利息 | 度量 |
 | `fee` | 费用 | 度量 |
 | `bal` | 余额 | 度量 |
-| `cnt` | 件数/笔数 | 度量 |
-| `rat` | 比率 | 度量 |
+| `cnt` | 数量/笔数 | 度量 |
 | `days` | 天数 | 度量 |
 | `cust` | 客户 | 实体 |
-| `prod` | 产品 | 实体 |
-| `chn` | 渠道 | 实体 |
+| `channel` | 渠道 | 实体 |
 | `org` | 机构 | 实体 |
 | `acct` | 账户 | 实体 |
+| `two_level_org` | 二级机构 | 组织 |
+| `three_level_org` | 三级机构 | 组织 |
+| `four_level_org` | 四级机构 | 组织 |
+| `full_org` | 组织全链路 | 组织 |
 
 ### 1.3 词根缺失处理
 
-当词根表中没有匹配项时：
-1. 使用通用英文缩写
-2. 在字段 COMMENT 中标注 `（新词根，待入库）`
-3. 告知用户需要向词根表新增该词根
+当词根表中没有匹配项时，**必须阻断输出**：
+1. 明确提示用户该语义单元无匹配词根
+2. 建议用户补充/确认词根（或先入库词根）后再继续
+3. **禁止**使用通用英文缩写临时替代（可能与已有词根冲突）
 
 ---
 
@@ -137,9 +139,9 @@ ORDER BY word_root;
 | `curr_` | 当前 (current) | `curr_bal` | ✅ `curr` |
 | `qtr_` | 季度 (quarter) | `qtr_sum_loan_amt` | ✅ `qtr` |
 | `last_year_` | 去年 (last year) | `last_year_sum_loan_amt` | ✅ `last_year` |
-| `latest_1m_` | 近1月 | `latest_1m_cnt_repay` | ✅ `latest_1m` |
+| `latest_1m_` | 近1月 | `latest_1m_repay_cnt` | ✅ `latest_1m` |
 | `latest_3m_` | 近3月 | `latest_3m_avg_loan_amt` | ✅ `latest_3m` |
-| `p{N}d_` | 过去N天 | `p30d_cnt_repay` | ⚠️ 须查词根 |
+| `p{N}d_` | 过去N天 | `p30d_repay_cnt` | ⚠️ 须查词根 |
 | `his_` | 历史累计 | `his_max_overdue_days` | ⚠️ 须查词根 |
 
 #### 聚合方式（第3段）
@@ -147,12 +149,13 @@ ORDER BY word_root;
 | 前缀 | 含义 | 示例 |
 |------|------|------|
 | `sum_` | 汇总 | `sum_loan_amt` |
-| `cnt_` | 计数 | `cnt_loan` |
 | `avg_` | 平均 | `avg_credit_amt` |
 | `max_` | 最大 | `max_overdue_days` |
 | `min_` | 最小 | `min_repay_amt` |
-| `rat_` | 比率 | `rat_overdue_m1` |
-| `dist_cnt_` | 去重计数 | `dist_cnt_cust` |
+| `tot_` | 合计 | `tot_loan_amt` |
+| `cum_` | 累计 | `cum_loan_amt` |
+
+> **注意**: `cnt`(数量) 的 tag 是 `CATEGORY_WORD`，不是 CONVERGE，应作为后缀使用（如 `loan_cnt`），不是前缀。
 
 #### 业务主题（第4段）
 
@@ -161,7 +164,7 @@ ORDER BY word_root;
 | 组合 | 含义 |
 |------|------|
 | `loan_amt` | 放款金额 |
-| `repay_prin` | 还款本金 |
+| `repay_princ` | 还款本金 |
 | `overdue_days` | 逾期天数 |
 | `credit_amt` | 授信额度 |
 | `apply` | 进件（作为计数对象时可不加度量） |
@@ -170,11 +173,11 @@ ORDER BY word_root;
 
 | 后缀 | 含义 | 示例 |
 |------|------|------|
-| `_normal` | 正常 | `cnt_repay_normal` |
-| `_overdue` | 逾期 | `cnt_repay_overdue` |
-| `_m1` / `_m2` / `_m3` | M1/M2/M3期 | `rat_overdue_m1` |
+| `_normal` | 正常 | `repay_normal_cnt` |
+| `_overdue` | 逾期 | `repay_overdue_cnt` |
+| `_m1` / `_m2` / `_m3` | M1/M2/M3期 | `overdue_m1_amt` |
 | `_first` | 首次 | `is_first_overdue` |
-| `_new` | 新增 | `cnt_loan_new` |
+| `_new` | 新增 | `loan_new_cnt` |
 
 ### 3.3 维度字段命名
 
@@ -221,17 +224,15 @@ DDL 中字段按以下分组排列，组内按字母序：
   ├── p{N}d_（过去N天）
   └── his_（历史）
 
-第4组: 无时间前缀的聚合指标
+第4组: 无时间前缀的聚合指标（CONVERGE 前缀）
   ├── sum_
   ├── tot_
   ├── cum_
-  ├── cnt_
   ├── avg_
   ├── max_
-  ├── min_
-  └── rat_
+  └── min_
 
-第5组: 其他业务字段
+第5组: 其他业务字段（含 CATEGORY_WORD 后缀如 _cnt, _amt, _days 等）
 ```
 
 每组之间在 DDL 中用注释行分隔：

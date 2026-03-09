@@ -144,7 +144,7 @@ FROM {table} WHERE stat_date = '${stat_date}';
 
 | 属性 | 值 |
 |------|-----|
-| 适用 | DECIMAL(10,4) + 字段名含 `rat_` / `_rate` |
+| 适用 | DECIMAL(10,4) + 字段名含 `_rate` / COMMENT 含"率" |
 | 级别 | ERROR |
 | 阈值 | 全部落在 [0, 1]（可配置为 [0, 100] 百分比场景） |
 
@@ -277,7 +277,7 @@ SELECT ABS(
 SELECT COUNT(*) AS inconsistent_cnt
 FROM {table}
 WHERE stat_date = '${stat_date}'
-  AND today_cnt_loan > 0
+  AND today_loan_cnt > 0
   AND today_sum_loan_amt <= 0;
 -- ERROR if inconsistent_cnt > 0
 

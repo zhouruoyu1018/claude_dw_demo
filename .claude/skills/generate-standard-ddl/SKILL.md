@@ -196,6 +196,12 @@ search_word_root_batch(keywords=["放款", "金额", "逾期", "天数", ...])
 
 **硬约束**：只能使用查询结果里返回的 `english_abbr` 和 `tag`，禁止自行猜测 tag 或自造缩写。
 
+**覆盖率自检（必须执行）**：批量查询完成后，逐一核对 Step 3.1 的 `unique_units` 列表：
+- 每个语义单元必须在查询结果中有对应的候选词根
+- 若某个语义单元未包含在 `search_word_root_batch` 的 `keywords` 参数中 → **遗漏**，必须补查
+- 若某个语义单元已查询但无结果 → 进入 Step 3.3 补查流程
+- ❌ 禁止使用任何未经 `search_word_root` / `search_word_root_batch` 返回的缩写或 tag
+
 ### 3.3 补查未命中词根
 
 仅当 Step 3.2 中某些语义单元**找不到**匹配时，才单独补查 `search_word_root(keyword="xxx", match_mode="exact_first")`。
@@ -210,6 +216,8 @@ search_word_root_batch(keywords=["放款", "金额", "逾期", "天数", ...])
 
 ### 3.4 结构化命名草案 (field_spec)
 
+> **前置条件检查**：进入本步骤前，确认 Step 3.1 `unique_units` 中的**每一个**语义单元都已通过 Step 3.2 或 3.3 获得了词根查询结果。若存在未查询的语义单元，返回 Step 3.2 补查，禁止跳过。
+
 > 将语义工作和机械工作分离：模型负责语义（拆分、选根、标 tag），规则负责拼接。
 
 对每个需命名的指标字段，先输出 `field_spec` 结构化数据，**禁止直接输出最终字段名**：
@@ -221,9 +229,13 @@ field_spec 至少包含：
 - semantic_units:  最小语义单元列表（如 ["当日", "汇总", "放款", "金额"]）
 - selected_roots:  选中的词根缩写列表（如 ["today", "sum", "loan", "amt"]）
 - selected_tags:   对应 tag 列表（如 ["TIME", "CONVERGE", "BIZ_ENTITY", "CATEGORY_WORD"]）
+- root_sources:    每个词根的查询来源（如 ["batch:今天→today", "batch:汇总→sum", "batch:放款→loan", "batch:金额→amt"]）
 - type_hint:       数据类型提示（如 DECIMAL(38,10)）
 - comment_hint:    COMMENT 内容（如"当日放款总金额，单位：元"）
 ```
+
+**root_sources 合法值**：`batch:{中文}→{缩写}`（来自 search_word_root_batch）、`single:{中文}→{缩写}`（来自 search_word_root 补查）。
+❌ 不允许出现无来源的词根。若 root_sources 中某项无法标注查询来源，说明该词根未经查询，必须返回 Step 3.2 补查。
 
 ### 3.5 规则化拼接（确定性）
 
@@ -271,9 +283,9 @@ assemble_field_names({
 |------|-----|------|----------|
 | 1 | `BOOL` | 布尔前缀 | `is` |
 | 2 | `TIME` | 时间范围 | `today`, `yestd`, `curr_mth`, `last_year` |
-| 3 | `CONVERGE` | 聚合方式 | `sum`, `cnt`, `avg`, `rat`, `max`, `min` |
+| 3 | `CONVERGE` | 聚合方式 | `sum`, `avg`, `max`, `min`, `tot`, `cum` |
 | 4 | `BIZ_ENTITY` | 业务实体 | `loan`, `channel`, `overdue`, `credit` |
-| 5 | `CATEGORY_WORD` | 分类词 | `amt`, `cnt`, `ytd`, `mtd` |
+| 5 | `CATEGORY_WORD` | 分类词 | `amt`, `cnt`, `days`, `bal`, `fee`, `ytd`, `mtd` |
 
 **重要：必须查词根表确认 tag，不能凭语义猜测位置。**
 
@@ -296,11 +308,11 @@ validate_field_names({
       ]
     },
     {
-      "field_name": "today_cnt_loan",
+      "field_name": "today_loan_cnt",
       "expected_units": [
         {"semantic_unit": "今日", "english_abbr": "today", "tag": "TIME"},
-        {"semantic_unit": "计数", "english_abbr": "cnt", "tag": "CONVERGE"},
-        {"semantic_unit": "放款", "english_abbr": "loan", "tag": "BIZ_ENTITY"}
+        {"semantic_unit": "放款", "english_abbr": "loan", "tag": "BIZ_ENTITY"},
+        {"semantic_unit": "数量", "english_abbr": "cnt", "tag": "CATEGORY_WORD"}
       ]
     }
   ],
@@ -336,7 +348,7 @@ validate_field_names({
 | field_id | field_cn_name | field_role | semantic_units | selected_roots | selected_tags | final_field_name | type_hint | comment_hint | evidence_source |
 |----------|--------------|------------|---------------|---------------|--------------|-----------------|-----------|-------------|----------------|
 | 1 | 当日放款金额 | metric | 当日,汇总,放款,金额 | today,sum,loan,amt | TIME,CONVERGE,BIZ_ENTITY,CATEGORY_WORD | `today_sum_loan_amt` | DECIMAL(38,10) | 当日放款总金额，单位：元 | 并行词根查询 |
-| 2 | 当日放款笔数 | metric | 当日,计数,放款 | today,cnt,loan | TIME,CONVERGE,BIZ_ENTITY | `today_cnt_loan` | DECIMAL(38,10) | 当日放款订单去重计数 | 并行词根查询 |
+| 2 | 当日放款笔数 | metric | 当日,放款,数量 | today,loan,cnt | TIME,BIZ_ENTITY,CATEGORY_WORD | `today_loan_cnt` | DECIMAL(38,10) | 当日放款订单去重计数 | 并行词根查询 |
 
 说明：
 - `semantic_units` 必须是最小语义单元
@@ -360,7 +372,7 @@ DDL 中字段按以下顺序排列：
 1. 维度字段（主键/ID → 编码 → 名称 → 日期 → 状态）
 2. 布尔字段（`is_` / `has_` 开头）
 3. 时间类指标（`today_` → `yestd_` → `curr_mth_` → `qtr_` → `latest_{N}m_` → ...，完整顺序见 [references/naming-convention.md](references/naming-convention.md) §5）
-4. 聚合指标（`sum_` → `tot_` → `cum_` → `cnt_` → `avg_` → `max_` → `min_` → `rat_`）
+4. 聚合指标（`sum_` → `tot_` → `cum_` → `avg_` → `max_` → `min_`）
 5. 其他业务字段
 ```
 
