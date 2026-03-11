@@ -157,42 +157,54 @@ description: DDL 变更设计师。凡涉及 CREATE TABLE、ALTER TABLE、分区
 
 ## Step 3: 字段命名
 
-### 3.1 语义拆分（必须先执行）
+### 3.1 语义拆分（复合词根优先）
 
-将所有字段的业务含义拆分为**最小语义单元**，禁止直接拿复合词整词命名。
+将所有字段的业务含义拆分为语义单元，采用**复合词根优先**策略。
 
-**核心规则**：词根表按最小语义单元入库（如"营业"→`biz`、"部门"→`dept`），复合词（如"营业部"）整词搜索通常无命中。
+**核心原则**：词根库中可能同时存在最小语义单元（如"二级"→`level2`、"机构"→`org`）和复合词根（如"二级机构"→`two_level_org`）。复合词根的缩写可能与拆分后各单元拼接的结果不同，**必须优先使用复合词根**。
 
 **执行步骤**：
 
 1. 遍历所有需要命名的字段，提取业务含义
-2. 将每个字段的业务含义拆分为最小语义单元：
+2. 识别字段中的**候选复合词**（2~4 字组合的业务术语，最长优先匹配），记入 `compound_candidates` 列表
    ```
-   "营业部"  → "营业" + "部门"
-   "放款金额" → "放款" + "金额"
-   "逾期天数" → "逾期" + "天数"
+   "二级机构编码" → 候选复合词: ["二级机构"]，其余: ["编码"]
+   "放款金额"     → 候选复合词: ["放款金额"]，其余: []
+   "营业部"       → 候选复合词: ["营业部"]
    ```
-3. 将所有字段的语义单元**合并去重**，得到 `unique_units` 列表
+3. 将所有 `compound_candidates` 去重后，用 `search_word_root_batch` 查询（**当 batch 不可用时**，降级为并行调用 `search_word_root` 逐个查询每个复合词候选）
+4. 根据查询结果分流：
+   - **命中复合词根**（`match_level=exact`）→ 直接采用该复合词根，不再拆分
+   - **未命中** → 拆分为最小语义单元，加入 `unique_units`
+   ```
+   "二级机构" → 命中 two_level_org → 直接使用，不拆分
+   "放款金额" → 未命中             → 拆为 "放款" + "金额"
+   "营业部"   → 未命中             → 拆为 "营业" + "部门"
+   ```
+5. 将拆分后的最小语义单元**合并去重**，得到 `unique_units` 列表（不含已命中复合词根的部分）
 
 **禁止行为**：
-- ❌ 直接搜索 `search_word_root(keyword="营业部")` → 通常无结果
+- ❌ 跳过复合词查询，直接全部拆分为最小语义单元
+- ❌ 复合词根已命中后仍拆分覆盖（如"二级机构"命中 `two_level_org` 后，不应再拆为"二级"→`level2` +"机构"→`org`）
 - ❌ 搜索无结果后直接用英文翻译（如 `sales_dept`）替代 → 可能与已有词根冲突
 
 ### 3.2 并行词根查询（替代全量预取）
 
 > ⚠️ 禁止按 tag 全量浏览词根表（词根 1000+ 条，limit=50 无法覆盖且浪费上下文）。仅查询本次字段涉及的语义单元。
 
-将 Step 3.1 去重后的 `unique_units` 传入 `search_word_root_batch` 一次性查询：
+将 Step 3.1 中**未被复合词根覆盖**的 `unique_units` 传入 `search_word_root_batch` 一次性查询：
 
 ```
 search_word_root_batch(keywords=["放款", "金额", "逾期", "天数", ...])
 ```
 
+> 注意：Step 3.1 复合词查询已命中的词根无需再查，直接从 Step 3.1 结果中复用。
+
 **当 `search_word_root_batch` 不可用时**，降级为并行调用 `search_word_root`（每个 unique_unit 一个调用）。
 
 **跨字段复用**：同一语义单元在多个字段中出现时（如"放款"出现在 `放款金额` 和 `放款笔数` 中），只查一次，结果跨字段复用。
 
-合并所有返回结果构建本地查找表：`{语义单元 → [candidates]}`
+合并所有返回结果构建本地查找表：`{语义单元 → [candidates]}`，并将 Step 3.1 命中的复合词根也纳入查找表。
 
 **硬约束**：只能使用查询结果里返回的 `english_abbr` 和 `tag`，禁止自行猜测 tag 或自造缩写。
 
@@ -220,13 +232,13 @@ search_word_root_batch(keywords=["放款", "金额", "逾期", "天数", ...])
 
 > 将语义工作和机械工作分离：模型负责语义（拆分、选根、标 tag），规则负责拼接。
 
-对每个需命名的指标字段，先输出 `field_spec` 结构化数据，**禁止直接输出最终字段名**：
+对每个需要走词根流程的字段（指标/布尔/复合维度），先输出 `field_spec` 结构化数据，**禁止直接输出最终字段名**：
 
 ```
 field_spec 至少包含：
 - field_cn_name:   字段中文名（如"当日放款金额"）
 - field_role:      dimension / metric / boolean
-- semantic_units:  最小语义单元列表（如 ["当日", "汇总", "放款", "金额"]）
+- semantic_units:  经 Step 3.1 复合词根优先处理后的语义单元列表（可包含复合词根，如 ["二级机构", "编码"] 或最小单元 ["当日", "汇总", "放款", "金额"]）
 - selected_roots:  选中的词根缩写列表（如 ["today", "sum", "loan", "amt"]）
 - selected_tags:   对应 tag 列表（如 ["TIME", "CONVERGE", "BIZ_ENTITY", "CATEGORY_WORD"]）
 - root_sources:    每个词根的查询来源（如 ["batch:今天→today", "batch:汇总→sum", "batch:放款→loan", "batch:金额→amt"]）
@@ -234,7 +246,7 @@ field_spec 至少包含：
 - comment_hint:    COMMENT 内容（如"当日放款总金额，单位：元"）
 ```
 
-**root_sources 合法值**：`batch:{中文}→{缩写}`（来自 search_word_root_batch）、`single:{中文}→{缩写}`（来自 search_word_root 补查）。
+**root_sources 合法值**：`compound:{中文}→{缩写}`（来自 Step 3.1 复合词根查询）、`batch:{中文}→{缩写}`（来自 search_word_root_batch）、`single:{中文}→{缩写}`（来自 search_word_root 补查）。
 ❌ 不允许出现无来源的词根。若 root_sources 中某项无法标注查询来源，说明该词根未经查询，必须返回 Step 3.2 补查。
 
 ### 3.5 规则化拼接（确定性）
@@ -351,14 +363,58 @@ validate_field_names({
 | 2 | 当日放款笔数 | metric | 当日,放款,数量 | today,loan,cnt | TIME,BIZ_ENTITY,CATEGORY_WORD | `today_loan_cnt` | DECIMAL(38,10) | 当日放款订单去重计数 | 并行词根查询 |
 
 说明：
-- `semantic_units` 必须是最小语义单元
+- `semantic_units` 是经 Step 3.1 复合词根优先处理后的语义单元（命中复合词根的保留整词，未命中的拆为最小单元）
 - 指标/布尔字段的 `selected_tags` 必须来自 MCP 查询结果，不能凭语义猜
-- 维度字段不进入此表，其命名走 Step 3.8 的 `{实体}_{后缀}` 模式
-- `evidence_source` 记录对应工具调用方式（便于复核）
+- **简单维度字段**（≤2 语义单元，如 `loan_id`）不进入此表，走 Step 3.8 免查流程
+- **复合维度字段**（中文语义 ≥3 单元，如"机构全链路编码"）必须进入此表，与指标字段同等走词根查询流程
+- `evidence_source` 记录对应工具调用方式（便于复核），合法值示例：`并行词根查询`、`单次补查`
 
 ### 3.8 维度字段命名
 
-维度字段按 `{实体}_{后缀}` 命名（如 `loan_id`, `product_code`），无需走词根查询流程。完整规则见 [references/naming-convention.md](references/naming-convention.md) §3.3
+维度字段分两类处理：
+
+**简单维度（免查词根）**：仅由 `{实体}_{后缀}` 构成，后缀限定为以下闭集：
+`_id`, `_code`, `_name`, `_abbr`, `_date`, `_status`, `_type`, `_level`, `_flag`
+- 示例：`loan_id`, `product_code`, `org_name`
+- 判定条件：基于**中文业务含义**拆分后不超过 2 个语义单元（如"贷款"+"编号"= 2 个）
+- ⚠️ 不要按英文字段名的 `_` 拆分来判定，复合词根（如 `two_level_org`）在英文中含多个 `_` 但在中文中是一个语义单元
+- 这类字段不进入 Step 3.7 字段设计表
+
+**复合维度（必须查词根）**：中文业务含义包含 **3 个及以上语义单元**时，必须回到 Step 3.1~3.6 走完整词根查询 + 校验流程，并进入 Step 3.7 字段设计表。
+- 示例："二级机构编码" → 语义单元 [二级机构, 编码]，经 Step 3.1 复合词根查询命中 `two_level_org`，最终只有 2 个语义单元 → 简单维度
+- 示例："机构全链路编码" → 语义单元 [机构, 全链路, 编码] ≥ 3 → 复合维度，必须走词根流程
+- ❌ 禁止以 `field_role: dimension` 为由跳过词根查询
+
+完整维度后缀规则见 [references/naming-convention.md](references/naming-convention.md) §3.3
+
+### 3.9 未验证词根检测（输出前闸门）
+
+> 在输出 DDL 前执行，防止遗漏词根查询。
+
+**检测逻辑：**
+
+1. 收集所有需要走词根流程的字段（指标/布尔/复合维度）的 `selected_roots` 列表，合并去重得到 `used_roots`
+2. 收集所有 `root_sources` 中已标注来源的词根，得到 `validated_roots`
+3. 简单维度字段（Step 3.8 免查类）不参与检测
+4. 分区字段（`stat_date`, `stat_month` 等）不参与检测
+5. 差集检测：`unvalidated = used_roots - validated_roots`
+
+> 注意：不要按 `_` 拆分 `final_field_name` 来提取词根，复合词根（如 `two_level_org`）会被错误拆成多个片段导致误报。必须基于 `selected_roots` 计算。
+
+**阻断规则：**
+- `unvalidated` 非空 → 列出未验证词根及所属字段，返回 Step 3.2/3.3 补查
+- ❌ 禁止跳过此检查直接输出 DDL
+
+**示例：**
+```
+简单维度: "产品编码"（中文 2 语义单元）→ 不参与检测，跳过
+指标字段: "当日放款金额" selected_roots: [today, sum, loan, amt] root_sources: [batch:当日→today, batch:汇总→sum, batch:放款→loan, batch:金额→amt]
+指标字段: "当日逾期笔数" selected_roots: [today, overdue, cnt]  root_sources: [batch:当日→today, batch:逾期→overdue]
+
+used_roots:      {today, sum, loan, amt, overdue, cnt}
+validated_roots: {today, sum, loan, amt, overdue}
+unvalidated:     {cnt} → 阻断，返回 Step 3.2/3.3 补查 "笔数/数量" 的词根
+```
 
 ---
 

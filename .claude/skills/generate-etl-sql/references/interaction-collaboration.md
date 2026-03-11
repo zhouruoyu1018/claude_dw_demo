@@ -12,6 +12,8 @@
 6. 指标入库：候选新指标是否入库
 7. JOIN 键近名歧义：多个相似字段可能误选
 8. JOIN 键语义不匹配：编码/ID/PSID 类型不一致
+9. 变更影响确认：patch 模式下，修改可能影响现有字段的正确性
+10. 现有脚本定位：无法自动找到 ETL 脚本时询问用户
 
 推荐问法应包含：
 
@@ -23,12 +25,19 @@
 ## 协作链路
 
 ```text
-需求文档
+需求文档（新建）
   -> dw-requirement-triage
   -> search-hive-metadata
   -> generate-standard-ddl
   -> generate-etl-sql
   -> 调度上线 / QA
+
+变更需求（扩列/修改）
+  -> dw-requirement-triage (识别为扩列需求)
+  -> search-hive-metadata (确认表存在 + 粒度匹配)
+  -> generate-standard-ddl (ALTER TABLE)
+  -> generate-etl-sql --mode=patch (修改现有 ETL)
+  -> generate-qa-suite (更新测试)
 ```
 
 ## 前置依赖契约
