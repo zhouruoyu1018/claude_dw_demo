@@ -87,19 +87,26 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 ## 使用方式
 
-### 方式一：完整流程
+### 方式一：完整流程（默认带门控）
 
-用户提供需求文档或描述后，系统自动串联执行全部 5 个阶段：
+用户提供需求文档或描述后，串联执行全部阶段。**每个 Phase 完成后必须停下等待用户确认，确认通过后才进入下一阶段**：
 
 ```
 用户: 帮我开发一个按日+产品统计放款金额的报表
 
-助手:
-1. [Phase 1] 需求拆解 → 识别为聚合统计需求，指标=放款金额，维度=日期+产品
-2. [Phase 2] 复用检索 → 搜索指标库，检查是否已有放款金额指标...
-3. [Phase 3] 模型设计 → 生成 DDL...
-4. [Phase 4] ETL 开发 → 生成 INSERT SQL...
-5. [Phase 5] 测试套件 → 生成冒烟测试和 DQC 规则...
+助手: [Phase 1] 需求拆解完成 → 输出需求清单
+  ⏸️ 等待用户确认需求拆解结果
+用户: 确认
+助手: [Phase 2] 复用检索完成 → 未找到可复用指标，建议新建
+  ⏸️ 等待用户确认开发方案
+用户: 确认，新建
+助手: [Phase 3] 模型设计完成 → 输出 DDL
+  ⏸️ 等待用户确认 DDL
+用户: 确认
+助手: [Phase 4] ETL 开发完成 → 输出 SQL
+  ⏸️ 等待用户确认 ETL 逻辑
+用户: 确认
+助手: [Phase 5] 测试套件完成 → 输出测试脚本
 ```
 
 ### 方式二：阶段执行
@@ -158,108 +165,141 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 ### Phase 1: 需求拆解 (dw-requirement-triage)
 
 **触发条件**: 用户提供需求文档或业务描述
-**输出**: 结构化需求清单（指标、维度、时间粒度、建议分层/引擎），持久化到 `docs/wip/req-{table_name}.md`
-**用户确认点**: 需求拆解结果是否正确
 
-详见 [references/phase-execution-details.md](references/phase-execution-details.md)
+**☑️ 必做清单（按顺序执行，不可跳过）**:
+1. ⚠️ **必须**调用 `dw-requirement-triage` skill（禁止自行拆解需求）
+2. 将结构化需求清单写入 `docs/wip/req-{table_name}.md`（`status: wip`）
+3. 如首次运行，采集用户偏好写入 MEMORY.md
+
+> **⏸️ GATE**: 展示需求清单，等待用户确认拆解结果正确。禁止自动跳转到 Phase 2。
+
+执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
 ---
 
 ### Phase 2: 复用检索 (search-hive-metadata)
 
-**触发条件**: Phase 1 完成
-**执行**: 指标复用检查 → 现有表搜索 → 多源消歧 → 粒度匹配 → 词根查询
-**决策分支**: 指标复用(结束) / 继续开发(Phase 3) / 扩列 / 新建
-**用户确认点**: 是否复用现有指标、多源候选选择、扩列还是新建
+**触发条件**: Phase 1 用户确认通过
 
-详见 [references/phase-execution-details.md](references/phase-execution-details.md)
+**☑️ 必做清单（按顺序执行，不可跳过）**:
+1. 读取 MEMORY.md 表清单（补充 MCP 搜索，识别近期新建但元数据未同步的表）
+2. 读取 pitfalls.md（了解源表已知问题）
+3. 调用 `search_existing_indicators` 检查指标是否已存在
+4. 调用 `search_table` / `search_by_comment` 搜索同主题现有表
+5. 多源候选时执行消歧评分（口径40 > 粒度30 > 分层20 > 覆盖10）
+6. 粒度匹配判断（优先 TBLPROPERTIES，次选表注释 `[粒度：...]`）
+7. 调用 `search_word_root` 获取标准词根（为 Phase 3 准备）
+8. 如决定复用现有指标，将复用决策写入 MEMORY.md 决策日志
+
+**决策分支**: 指标复用(结束) / 继续开发(Phase 3) / 扩列 / 新建
+
+> **⏸️ GATE**: 展示复用检索结果，等待用户确认以下决策：
+> - 是否复用现有指标（复用则流程结束）
+> - 多源候选如何选择（分差 < 10 时必须询问）
+> - 扩列还是新建
+>
+> ❌ 用户未确认前，禁止进入 Phase 3。
+
+执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
 ---
 
 ### Phase 3: 模型设计 (generate-standard-ddl)
 
-**触发条件**: Phase 2 决定需要开发
-**执行**: 建模决策 (CASE A 扩列 / CASE B 新建 / CASE C 冲突询问) → 字段命名 → 生成 DDL
-**输出**: CREATE TABLE 或 ALTER TABLE 语句
-**用户确认点**: DDL 是否符合预期
+**触发条件**: Phase 2 用户确认需要开发
 
-详见 [references/phase-execution-details.md](references/phase-execution-details.md)
+**☑️ 必做清单（按顺序执行，不可跳过）**:
+1. 读取 MEMORY.md 决策日志（参考历史决策保持一致性）
+2. ⚠️ **必须**调用 `generate-standard-ddl` skill（禁止自行生成 DDL）
+3. 将表名、粒度、操作类型（新建/扩列）写入 MEMORY.md 表清单 + 决策日志
+4. 更新 `docs/wip/req-{table_name}.md` 中的 `target_table` 为确定表名
+
+**输出**: CREATE TABLE 或 ALTER TABLE 语句
+
+> **⏸️ GATE**: 展示 DDL + 字段设计表，等待用户确认 DDL 符合预期。禁止自动跳转到 Phase 4。
+
+执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
 ---
 
 ### Phase 4: ETL 开发 (generate-etl-sql)
 
-**触发条件**: Phase 3 完成
+**触发条件**: Phase 3 用户确认 DDL 通过
 
-**模式判断**（Phase 3 输出决定）:
-- Phase 3 输出 **CREATE TABLE** → generate-etl-sql 默认模式（incremental/init）
-- Phase 3 输出 **ALTER TABLE** → generate-etl-sql `--mode=patch`
+**☑️ 必做清单（按顺序执行，不可跳过）**:
+1. 读取 pitfalls.md（注入到 Step 2.5 自检清单）
+2. ⚠️ **必须**调用 `generate-etl-sql` skill（禁止自行编写 ETL SQL）
+   - Phase 3 输出 **CREATE TABLE** → 默认模式（incremental/init）
+   - Phase 3 输出 **ALTER TABLE** → `--mode=patch`
+
+**📌 以下动作在 GATE 用户确认通过后执行**:
+3. 将新注册的指标写入 MEMORY.md 决策日志
+4. 回写已确认的字段映射到 `docs/wip/req-{table_name}.md`；任何需求变更同步更新对应章节
+5. 自动调用 `register_lineage` 注册血缘（修改模式使用 `full_refresh=true`，无需用户确认）
+
+**模式详情**:
 
 #### 新建模式（incremental/init）
 
-Phase 3 输出 CREATE TABLE 时执行：
-
-1. **加载需求上下文**: 从当前会话上下文或 `docs/wip/req-{table_name}.md` 读取需求信息
-2. 解析源表 Schema（从 Phase 2 获取）
-3. **生成字段映射草案**: 结合需求清单 + 源表 Schema + 目标表 DDL，自动生成映射草案
-4. **用户确认/补全映射**: 逐项展示映射，用户确认或补全计算逻辑，确认无遗漏后继续
-5. **询问生成模式**: 是否需要生成历史数据初始化脚本？
-   - **默认**: 仅生成增量脚本（T+1 日常调度）
-   - **可选**: 同时生成增量 + 初始化脚本（新表上线回刷）
-6. 分析加工模式（简单聚合/多表关联/窗口计算/分组集）
-7. **逻辑流程确认（Step 2.5）**: 多表关联(3+表)/窗口计算/分组集/混合模式时，**必须**先输出伪代码（数据流 + CTE 拆解 + 自检清单），等待用户确认后再生成 SQL。仅简单聚合可跳过
-8. 构建 SQL 结构（CTE 拆解复杂逻辑）
-9. 生成 INSERT OVERWRITE SQL（适配目标引擎语法）
-   - 增量模式：`WHERE stat_date = '${stat_date}'`，静态分区
-   - 初始化模式：`WHERE stat_date BETWEEN '${start_date}' AND '${end_date}'`，动态分区
-10. **指标入库检查**: 识别新指标，询问是否注册到指标库
-11. **血缘注册**: 自动提取并注册表级/字段级血缘关系
+1. 加载需求上下文（从会话或 `docs/wip/req-{table_name}.md`）
+2. 解析源表 Schema → 生成字段映射草案 → 用户确认/补全映射
+3. 询问是否需要初始化脚本（默认仅增量）
+4. 分析加工模式 → 复杂模式（3+表关联/窗口/分组集）**必须**先输出伪代码等用户确认
+5. 生成 INSERT OVERWRITE SQL → 指标入库检查 → 血缘注册
 
 #### 修改模式（patch）
 
-Phase 3 输出 ALTER TABLE 时执行：
-
-1. **定位现有 ETL 脚本**:
-   a. 优先在 `sql/hive/etl/` 下按 `{table_name}_etl.sql` 查找
-   b. 未找到 → 询问用户提供 ETL 脚本路径
-   c. 用户表示无现有脚本 → 降级为 incremental 模式（新建 ETL）
-2. **传入 generate-etl-sql --mode=patch**: 现有 ETL 脚本路径 + ALTER TABLE DDL + 变更需求
-3. generate-etl-sql 内部执行 Step P0~P3（解析→影响分析→方案确认→应用变更）+ Step 4~6
-4. 输出修改后的完整 ETL 脚本
+1. 定位现有 ETL 脚本（`sql/hive/etl/{table_name}_etl.sql`，未找到则询问用户）
+2. 传入 `generate-etl-sql --mode=patch` → 内部 Step P0~P3 + Step 4~6
+3. 输出修改后的完整 ETL 脚本
 
 **输出**:
-- **新建模式**: `{table_name}_etl.sql`（+ 可选 `{table_name}_init.sql`）
-- **修改模式**: 修改后的 `{table_name}_etl.sql`（覆盖原文件，含 changelog）
+- 新建: `{table_name}_etl.sql`（+ 可选 `{table_name}_init.sql`）
+- 修改: 修改后的 `{table_name}_etl.sql`（含 changelog）
 
-**用户确认点**:
-- （新建）字段映射草案是否正确、是否有遗漏（Step 0 确认）
-- （新建）是否需要生成初始化脚本（新表上线场景）
-- （新建/修改）**逻辑流程/伪代码**是否正确（Step 2.5 / Step P2 确认）
-- （新建/修改）ETL 逻辑是否正确
-- （新建/修改）新指标是否入库
-
-**自动执行（无需确认）**:
-- 血缘注册（调用 `register_lineage`，修改模式使用 `full_refresh=true`）
+> **⏸️ GATE**: 展示 ETL 产出并等待用户逐项确认：
+> - 字段映射是否正确、是否有遗漏
+> - 逻辑流程/伪代码是否正确
+> - ETL SQL 是否正确
+> - 新指标是否入库
+>
+> ❌ 用户未确认前，禁止进入 Phase 4.5 或 Phase 5。
 
 ---
 
 ### Phase 4.5: SQL 审查 (review-sql) — 可选
 
-**触发条件**: Phase 4 完成 + `--review` 参数或用户手动请求审查
-**执行**: review-sql 审查 → FATAL 项阻断（最多 3 轮修复循环）→ 通过后继续
+**触发条件**: Phase 4 用户确认通过 + `--review` 参数或用户手动请求审查
 **默认行为**: 跳过（不加 `--review` 时不执行此阶段）
 
-详见 [references/phase-execution-details.md](references/phase-execution-details.md)
+**☑️ 必做清单（仅 --review 时执行）**:
+1. ⚠️ **必须**调用 `review-sql` skill（禁止自行审查）
+2. FATAL 项阻断 → 修复后复查（最多 3 轮，超出则列出未解决项询问用户）
+3. 审查通过或用户选择跳过 → 进入 Phase 5
+
+执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
 ---
 
 ### Phase 5: 测试套件 (generate-qa-suite)
 
-**触发条件**: Phase 4（或 Phase 4.5）完成
-**输出**: 冒烟测试 + DQC 规则 + Doris 性能分析
-**用户确认点**: 测试覆盖是否充分
+**触发条件**: Phase 4 用户确认 ETL 通过（或 Phase 4.5 审查通过）
 
-详见 [references/phase-execution-details.md](references/phase-execution-details.md)
+**☑️ 必做清单（按顺序执行，不可跳过）**:
+1. ⚠️ **必须**调用 `generate-qa-suite` skill（禁止自行编写测试）
+
+**输出**: 冒烟测试 + DQC 规则 + Doris 性能分析
+
+> **⏸️ GATE**: 展示测试套件，等待用户确认：
+> - 测试覆盖是否充分
+> - DQC 规则是否符合业务预期
+>
+> ❌ 用户未确认前，禁止标记工作流完成。
+
+**📌 GATE 确认通过后执行**:
+2. 更新 `docs/wip/req-{table_name}.md` 状态为 `status: done`
+
+执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
 ---
 
@@ -326,7 +366,7 @@ Phase 3 输出 ALTER TABLE 时执行：
 | `search_table` | 按表名搜索现有表 | Phase 2, 3 |
 | `search_by_comment` | 按业务术语搜索表/字段 | Phase 2 |
 | `get_table_detail` | 获取表详情（含粒度信息） | Phase 2, 3 |
-| `search_word_root` | 查询词根，标准化字段命名 | Phase 3 |
+| `search_word_root` | 查询词根，标准化字段命名 | Phase 2, 3 |
 | `register_indicator` | 新指标入库 | Phase 4 |
 | `register_lineage` | 注册表级/字段级血缘 | Phase 4 |
 | `search_lineage_upstream` | 查询上游依赖（我依赖谁） | Phase 2, 影响分析 |

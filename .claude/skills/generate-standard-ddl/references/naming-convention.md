@@ -109,11 +109,13 @@ ORDER BY word_root;
 
 ### 3.1 命名组装顺序
 
+字段名由 `assemble_field_names` 工具自动按 tag 排序拼接，顺序为：
+
 ```
-{布尔前缀}_{时间范围}_{聚合方式}_{业务主题}_{分类词}
+{BOOL}_{TIME}_{CONVERGE}_{BIZ_ENTITY}_{CATEGORY_WORD}
 ```
 
-每段均可省略，但出现时必须按此顺序。
+每段均可省略，但出现时必须按此顺序。正常流程下无需手动排序。
 
 ### 3.2 各段详解
 
@@ -186,22 +188,16 @@ ORDER BY word_root;
 | 主键/ID | `{实体}_id` | `loan_id`, `cust_id` |
 | 编码 | `{实体}_code` | `product_code`, `channel_code` |
 | 名称 | `{实体}_name` | `product_name`, `channel_name` |
+| 缩写 | `{实体}_abbr` | `org_abbr`, `channel_abbr` |
 | 日期 | `{实体}_date` | `loan_date`, `apply_date` |
 | 状态 | `{实体}_status` | `loan_status` |
+| 类型 | `{实体}_type` | `product_type`, `channel_type` |
+| 层级 | `{实体}_level` | `org_level`, `risk_level` |
+| 标志 | `{实体}_flag` | `delete_flag`, `active_flag` |
 
 ---
 
-## 4. 常见违规模式（必须拦截）
-
-| 违规模式 | 错误示例 | 正确写法 | 说明 |
-|---------|----------|----------|------|
-| CATEGORY_WORD 不在末尾 | `mtd_m0_enr` | `m0_enr_mtd` | mtd/ytd 是 CATEGORY_WORD，必须在末尾 |
-| TIME 不在开头 | `loan_today_sum_amt` | `today_sum_loan_amt` | today 是 TIME，应在 CONVERGE 之前 |
-| CONVERGE 在 BIZ_ENTITY 之后 | `today_loan_sum_amt` | `today_sum_loan_amt` | sum 是 CONVERGE，应在 BIZ_ENTITY 之前 |
-
----
-
-## 5. 字段排序规范
+## 4. 字段排序规范
 
 DDL 中字段按以下分组排列，组内按字母序：
 
@@ -209,9 +205,13 @@ DDL 中字段按以下分组排列，组内按字母序：
 第1组: 维度字段
   ├── 主键/ID（_id 结尾）
   ├── 编码（_code 结尾）
+  ├── 缩写（_abbr 结尾）
   ├── 名称（_name 结尾）
+  ├── 类型（_type 结尾）
+  ├── 层级（_level 结尾）
   ├── 日期（_date 结尾）
-  └── 状态（_status 结尾）
+  ├── 状态（_status 结尾）
+  └── 标志（_flag 结尾）
 
 第2组: 布尔字段（is_ / has_ 开头）
 
