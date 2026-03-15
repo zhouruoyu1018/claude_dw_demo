@@ -172,7 +172,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 **☑️ 必做清单（按顺序执行，不可跳过）**:
 1. ⚠️ **必须**调用 `dw-requirement-triage` skill（禁止自行拆解需求）
 2. 将结构化需求清单写入 `docs/wip/req-{table_name}.md`（`status: wip`）
-3. 多表模式: 执行 Step 8.3 公共层分析，检测跨任务指标/源表重叠
+3. 多表模式: 执行 Step 8.3 公共层分析，检测跨任务指标/事实表重叠
 4. 单表 da: 执行 Step 8.4 dm 下沉分析，检测通用指标是否应先落 dm 层
 5. 如首次运行，采集用户偏好写入 MEMORY.md
 

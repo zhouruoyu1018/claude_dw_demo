@@ -226,6 +226,7 @@ Step 8 持久化完成
 对 DA 层目标表的每个指标进行通用度评分（通用信号 - 专用信号）：
 - **通用指标 >= 3 且无现有 dm** → SINK-NEW，新建 dm + da 两表
 - **通用指标 >= 2 且有可扩列 dm** → SINK-EXTEND，扩列现有 dm + da
+- **通用指标 >= 2 但计算简单且无现有 dm** → SUGGEST，提示可考虑，用户选择
 - **通用指标 < 2** → SKIP，保持单表
 
 触发下沉时升级为多表模式。详细评分模型、现有 dm 搜索和输出格式见 [dm-sink-analysis.md](references/dm-sink-analysis.md)。
