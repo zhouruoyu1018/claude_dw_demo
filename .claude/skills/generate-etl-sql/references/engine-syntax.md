@@ -227,6 +227,39 @@ FROM source_db.source_table
 WHERE partition_key = '${partition_key}';
 ```
 
+### 7.2.1 跨引擎 Catalog 关联（Doris + Hive）
+
+```sql
+-- 混用内外表时，双方都需要 catalog 前缀
+-- 内表: internal.{doris_db}.{table}
+-- 外表: hive_bdsp.{hive_db}.{table}
+
+set exec_mem_limit=1024*1024*1024*15;
+
+-- Catalog 直查示例（Hive 维度表 <100w）
+SELECT a.loan_id, b.dept_name
+FROM internal.ph_dm_sac_drs.fact_loan a
+JOIN [broadcast] hive_bdsp.ph_sac_dmm.dim_ds_dept_relation b
+    ON a.dept_code = CAST(b.dept_code AS VARCHAR(50))
+WHERE a.partition_key = '${partition_key}';
+
+-- INSERT 同步示例（Hive 事实表 ≥100w）
+INSERT INTO internal.ph_dm_sac_drs.dmm_sac_loan_sync (
+    loan_id, loan_amount, partition_key
+)
+SELECT loan_id, loan_amount, stat_date AS partition_key
+FROM hive_bdsp.ph_sac_dmm.dmm_sac_loan_dtl
+WHERE stat_date = '${stat_date}';
+```
+
+**跨引擎 JOIN hint 规则：**
+
+| Hive 外表数据量 | 位置 | JOIN hint |
+|----------------|------|-----------|
+| <100w（维度表） | 放右表 | `[broadcast]` |
+| ≥100w（事实表） | 任意 | `[shuffle]` |
+| 内表 JOIN 内表 | 正常 | 无需 hint（或按 Doris 常规优化） |
+
 ### 7.3 DELETE（Unique Model）
 
 ```sql

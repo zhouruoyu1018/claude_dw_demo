@@ -176,6 +176,33 @@ skills:
 1. **完整工作流**: `/dw-dev-workflow` - 从需求到测试脚本一站式生成
 2. **单独调用**: `/generate-standard-ddl`, `/generate-etl-sql` 等
 
+## Doris 跨引擎关联规范
+
+### Catalog 命名（固定，所有环境统一）
+- 外表(Hive): `hive_bdsp.{hive库名}.{表名}`，例: `hive_bdsp.ph_sac_dmm.dim_ds_dept_relation`
+- 内表(Doris): `internal.{doris库名}.{表名}`，例: `internal.ph_dm_sac_drs.dmm_sac_xxx`
+- **混用内外表时，内表也必须加 `internal.` 前缀**
+
+### 数据同步策略（二选一）
+
+| 策略 | 适用场景 | 实现方式 |
+|------|---------|---------|
+| **Catalog 直查** | Hive 表 <100w 行（维度表等） | Doris SQL 中直接 `JOIN hive_bdsp.库.表` |
+| **INSERT 同步** | Hive 表 ≥100w 行 | 定时调度将 Hive 数据 INSERT INTO Doris 本地表 |
+
+> 特大表同步时，必须在 SELECT 中过滤有效数据再导入，禁止全量同步。
+
+### Doris SQL 强制规范
+- 禁止 `SELECT *`
+- JOIN/比较/计算必须统一数据类型
+- 分区表必须用 `partition_key` 提前过滤
+- 所有作业需设置 `set exec_mem_limit=1024*1024*1024*15;`（15GB 内存限制）
+- JOIN 必须显式指定 hint：大表 JOIN `[broadcast]` 小表，大表 JOIN `[shuffle]` 大表
+- 关联 Hive 外表：≥100w 加 `[shuffle]`，<100w 放右表加 `[broadcast]`
+
+### Doris 元数据获取
+Doris 表无 MCP 元数据服务，需用户提供建表 DDL 语句。
+
 ## 建模决策策略 (Schema Evolution Policy)
 
 当用户提出新指标需求时，不要急着生成 CREATE TABLE。请执行以下检查：
@@ -186,6 +213,7 @@ skills:
    - **CASE A (扩充)**: 如果找到现有表，且业务主题相近 -> 生成 `ALTER TABLE ADD COLUMN` 语句。
    - **CASE B (新建)**: 如果没找到现有表，或粒度不匹配 -> 生成 `CREATE TABLE` 语句。
    - **CASE C (冲突)**: 如果粒度相同但业务跨度大（如销售vs库存） -> 询问用户。
+   - **CASE D (同步表)**: 如果 Doris ETL 需要关联 Hive 大表（≥100w），需先建 Doris 本地同步表 -> 生成同步表 `CREATE TABLE` + 同步 ETL。
 
 4. **输出要求**: 在你的回复中，明确告知用户你的决定理由。
    例如："检测到现有表 `dmm_sac_loan_dtl` 粒度与新指标一致，建议在该表中新增字段，而不是新建表。"

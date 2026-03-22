@@ -137,6 +137,7 @@ description: DDL 变更设计师。凡涉及 CREATE TABLE、ALTER TABLE、分区
 | **CASE A: 扩列** | 找到现有表，维度相同，业务主题相近 | 生成 `ALTER TABLE ADD COLUMN` |
 | **CASE B: 新建** | 未找到表，或粒度不匹配 | 生成 `CREATE TABLE` |
 | **CASE C: 冲突** | 粒度相同但业务跨度大 | 询问用户 |
+| **CASE D: 同步表** | 目标引擎 Doris，需关联 Hive 大表（≥100w），需求拆解输出同步策略以"INSERT 同步"开头 | 生成 Doris 本地同步表 `CREATE TABLE`，并标注后续需进入 generate-etl-sql 生成同步 SQL |
 
 **判断维度匹配：**
 - 比较分区键（PARTITIONED BY）
@@ -149,6 +150,11 @@ description: DDL 变更设计师。凡涉及 CREATE TABLE、ALTER TABLE、分区
 - 同属贷款销售域（apply/credit/sign/loan）→ 相近
 - 同属贷后管理域（repay/overdue/collect/writeoff）→ 相近
 - 跨域（如 loan vs overdue）→ 不相近，走 CASE C
+
+**CASE D 触发条件：**
+- 需求拆解（dw-requirement-triage）输出的"同步策略"以"INSERT 同步"开头（含带过滤条件的变体如"INSERT 同步(近30天)"）
+- Catalog 直查模式不需要建表，跳过 DDL 阶段
+- CASE D 与 CASE A/B/C 独立判断，针对的是 Doris 同步目标表，不是业务指标表
 
 **输出要求：** 必须在回复中告知用户决策理由。例如：
 > "检测到现有表 `dmm_sac_loan_prod_daily` 粒度与新指标一致（日+产品），建议在该表中新增字段，而不是新建表。"

@@ -271,6 +271,25 @@ Step 2.5 作为复杂场景门禁（窗口函数/分组集/混合模式），在
 - JOIN: 分区字段必须带上避免全表扫描，优先 `LEFT JOIN`
 - SELECT: 复杂表达式换行缩进，分区字段放末尾
 
+**Doris 跨引擎 ETL（当目标引擎为 Doris 且涉及 Hive 源表时）：**
+
+识别三种 Doris ETL 场景，按场景选择 SQL 模式：
+
+| 场景 | 描述 | SQL 模式 |
+|------|------|---------|
+| **Doris 纯内表** | 所有源表在 Doris 内部 | 现有逻辑不变 |
+| **Doris + Catalog 直查** | 部分源表走 `hive_bdsp` catalog | 混合 SQL，内表加 `internal.`，外表加 `hive_bdsp.` |
+| **Doris 同步 ETL** | 定时从 Hive 同步数据到 Doris 本地表 | `INSERT INTO internal.库.表 SELECT FROM hive_bdsp.库.表` |
+
+跨引擎强制规则：
+- 内表必须加 `internal.` 前缀（如 `internal.ph_dm_sac_drs.表名`）
+- Hive 外表必须加 `hive_bdsp.` 前缀（如 `hive_bdsp.ph_sac_dmm.表名`）
+- 所有作业需设置 `set exec_mem_limit=1024*1024*1024*15;`
+- JOIN 必须标注 `[broadcast]` 或 `[shuffle]` hint（<100w broadcast, ≥100w shuffle）
+- 跨引擎 JOIN 字段必须显式 `CAST` 统一类型
+- 禁止 `SELECT *`
+- 同步 ETL 源表必须带过滤条件（分区/日期），禁止全量同步
+
 详细模板、SET 参数配置（三引擎）、INSERT OVERWRITE 模板、字段/JOIN/WHERE/GROUP BY 规范见：
 [references/sql-construction-guide.md](references/sql-construction-guide.md)
 
@@ -287,7 +306,7 @@ Step 2.5 作为复杂场景门禁（窗口函数/分组集/混合模式），在
 | 分区裁剪 | WHERE 条件未包含分区字段 | 添加 `stat_date = '${stat_date}'` |
 | JOIN 爆炸 | 一对多 JOIN 导致数据膨胀 | 先聚合再 JOIN，或改用子查询 |
 | 数据倾斜 | GROUP BY 键分布不均 | Hive: `distribute by` / `skewjoin`；Doris: `COLOCATE` |
-| MapJoin | 小表未使用 MapJoin | 添加 `/*+ MAPJOIN(dim) */` 或确认自动生效 |
+| 小表 JOIN 优化 | 小表未使用引擎对应 hint | Hive: `/*+ MAPJOIN(dim) */`；Doris: `JOIN [broadcast]`（<100w）/ `JOIN [shuffle]`（≥100w） |
 | 窗口函数排序 | OVER 子句缺少 ORDER BY | 补充排序字段 |
 | NULL 处理 | 聚合字段含 NULL | `COALESCE(col, 0)` 或 `IFNULL` |
 | 类型转换 | JOIN 键类型不一致 | 显式 CAST |
@@ -323,6 +342,11 @@ Step 2.5 作为复杂场景门禁（窗口函数/分组集/混合模式），在
 
 - 引擎差异矩阵（函数、语法、变量写法）：[references/engine-syntax.md](references/engine-syntax.md)
 - 增量/初始化执行示例与参数注入方式：[references/etl-examples.md](references/etl-examples.md)
+
+**Doris 跨引擎注意事项：**
+- 脚本文件头需额外标注跨引擎模式和 Hive 依赖表（详见 sql-construction-guide.md）
+- 同步 ETL 的调度依赖：必须在上游 Hive ETL 完成后执行
+- Doris 表无 MCP 元数据，需用户提供建表 DDL
 
 ---
 

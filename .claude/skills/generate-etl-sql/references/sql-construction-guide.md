@@ -121,6 +121,8 @@ GROUP BY
 
 ### Doris — INSERT INTO（Unique Model Upsert）
 
+Unique Model 按主键自动覆盖，聚合场景需 GROUP BY：
+
 ```sql
 INSERT INTO {target_db}.{target_table}
 SELECT
@@ -130,6 +132,64 @@ WHERE partition_key = '${partition_key}'
 GROUP BY {group_cols}
 ;
 ```
+
+### Doris — INSERT INTO（Duplicate Model 追加）
+
+Duplicate Model 为 append-only，不需要 GROUP BY：
+
+```sql
+INSERT INTO {target_db}.{target_table}
+SELECT
+    {col_list}
+FROM {source}
+WHERE partition_key = '${partition_key}'
+;
+```
+
+### Doris 跨引擎 — Catalog 直查模式
+
+Doris ETL 关联 Hive 表时，内表加 `internal.`，外表加 `hive_bdsp.`：
+
+```sql
+set exec_mem_limit=1024*1024*1024*15;
+
+INSERT INTO internal.{target_db}.{target_table}
+SELECT
+    a.{col1}                                    AS {col1},        -- 内表字段
+    CAST(b.{dim_key} AS INT)                    AS {dim_key},     -- 类型统一
+    b.{dim_name}                                AS {dim_name},    -- Hive 维度字段
+    a.partition_key                              AS partition_key
+FROM internal.{doris_db}.{fact_table} a                           -- Doris 内表
+JOIN [broadcast] hive_bdsp.{hive_db}.{dim_table} b                -- Hive 小表 <100w
+    ON a.{join_key} = CAST(b.{join_key} AS {TYPE})                -- 显式类型转换
+WHERE a.partition_key = '${partition_key}'
+;
+```
+
+> **JOIN hint 规则**: Hive 外表 <100w 放右表加 `[broadcast]`，≥100w 加 `[shuffle]`。
+
+### Doris 跨引擎 — INSERT 同步模式
+
+定时从 Hive 同步数据到 Doris 本地表（适用于 ≥100w 的 Hive 源表）：
+
+```sql
+set exec_mem_limit=1024*1024*1024*15;
+
+INSERT INTO internal.{target_db}.{target_table} (
+    {col1},
+    {col2},
+    partition_key
+)
+SELECT
+    {col1},
+    {col2},
+    stat_date                                   AS partition_key  -- Hive stat_date → Doris partition_key
+FROM hive_bdsp.{hive_db}.{source_table}
+WHERE stat_date = '${stat_date}'                                  -- 必须过滤，禁止全量
+;
+```
+
+> **特大表**: 除日期过滤外，还需加业务条件过滤（如 `AND status = 'ACTIVE'`），仅同步有效数据。
 
 ---
 

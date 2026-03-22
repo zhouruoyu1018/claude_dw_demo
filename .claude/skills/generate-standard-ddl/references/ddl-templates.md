@@ -219,6 +219,41 @@ PROPERTIES (
 );
 ```
 
+### 3.3.1 同步表模板（Hive → Doris）
+
+适用于 CASE D：将 Hive 数据定时同步到 Doris 本地表。
+
+```sql
+-- =================================================================
+-- 同步表名:    {db}.{table_name}
+-- 同步来源:    hive_bdsp.{source_db}.{source_table}
+-- 表模型:      {Duplicate/Unique}（明细用 Duplicate，有去重需求用 Unique）
+-- 同步字段:    仅同步需要的字段，非全量复制
+-- 创建时间:    {YYYY-MM-DD}
+-- =================================================================
+
+CREATE TABLE IF NOT EXISTS {db}.{table_name} (
+    `{col1}`           {DORIS_TYPE}    COMMENT '{注释}',
+    `{col2}`           {DORIS_TYPE}    COMMENT '{注释}',
+    `partition_key`    DATE            COMMENT '分区键（对应 Hive stat_date）'
+)
+ENGINE = OLAP
+{DUPLICATE KEY / UNIQUE KEY} (`{key_cols}`, `partition_key`)
+COMMENT '同步自 hive_bdsp.{source_db}.{source_table}'
+DISTRIBUTED BY HASH(`{hash_col}`) BUCKETS {N}
+PROPERTIES (
+    'replication_num' = '3'
+);
+```
+
+**同步表生成规则：**
+- 表模型默认 Duplicate Model（保留明细），有去重需求用 Unique Model
+- 字段类型按 §3.4 映射表转换（STRING→VARCHAR(N), TIMESTAMP→DATETIME 等）
+- 分区键统一为 `partition_key DATE`
+- 库名固定为 `ph_dm_sac_drs`
+- COMMENT 必须标注来源表全名
+- 仅同步业务需要的字段，不要求全量复制
+
 ### 3.4 Doris 数据类型映射
 
 | Hive 类型 | Doris 类型 | 说明 |
