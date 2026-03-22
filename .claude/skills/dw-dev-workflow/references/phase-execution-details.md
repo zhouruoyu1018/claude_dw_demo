@@ -31,6 +31,8 @@
 建议引擎: Hive (T+1)
 ```
 
+**Checkpoint 写入**（GATE 通过后）: 将维度、粒度、分层、引擎、指标数量、复杂度评分写入 `phase_checkpoints.phase1`，更新 `phase_completed: 1`。详见 [req-file-schema.md](req-file-schema.md)。
+
 > 持久化和用户确认见 SKILL.md Phase 1 必做清单 + GATE。
 
 ---
@@ -63,6 +65,8 @@
 多源候选分数接近  →  询问用户选择数据源
 ```
 
+**Checkpoint 写入**（GATE 通过后）: 将复用决策、匹配指标、粒度匹配、候选表、词根缓存写入 `phase_checkpoints.phase2`，更新 `phase_completed: 2`。词根缓存 (`word_roots_cached`) 供 Phase 3 直接使用，避免重复查询。
+
 > 用户确认见 SKILL.md Phase 2 GATE。
 
 ---
@@ -79,6 +83,8 @@
 4. 生成 DDL（含 COMMENT、TBLPROPERTIES、逻辑主键）
 
 **输出**: 完整的 CREATE TABLE 或 ALTER TABLE 语句
+
+**Checkpoint 写入**（GATE 通过后）: 将建模决策(A/B/C)、DDL 类型(create/alter)、DDL 路径、字段数量、分区字段、词根校验结果写入 `phase_checkpoints.phase3`，更新 `phase_completed: 3`。`ddl_type` 直接决定 Phase 4 的 ETL 模式。
 
 > 触发条件、skill 调用、记忆写入、用户确认见 SKILL.md Phase 3 必做清单 + GATE。
 
@@ -107,6 +113,8 @@
 
 > skill 调用、修复循环、用户确认见 SKILL.md Phase 4.5 必做清单。
 
+**Checkpoint 写入**（审查通过后，仅 `--review` 模式）: 将审查结果（fatal/error/warn 计数）写入 `phase_checkpoints.phase4.review_result`。
+
 **默认行为**: 跳过（不加 `--review` 时不执行此阶段）
 
 ---
@@ -122,5 +130,7 @@
 4. Doris 专项：生成 EXPLAIN 分析请求
 
 **输出**: 完整的 QA Suite（冒烟测试 + DQC 规则 + 性能分析）
+
+**Checkpoint 写入**（GATE 通过后）: 将 QA 文件路径、冒烟测试数量、DQC 规则数量写入 `phase_checkpoints.phase5`，更新 `phase_completed: 5`，同时 `status` 改为 `done`。
 
 > skill 调用、状态更新、用户确认见 SKILL.md Phase 5 必做清单 + GATE。

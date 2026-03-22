@@ -112,31 +112,33 @@
 
 ## 上下文传递
 
-各阶段之间的数据传递：
+各阶段之间的数据传递（Schema v2 使用 `phase_checkpoints` 持久化关键决策，跨会话恢复时优先从 checkpoint 读取）：
 
-| 源阶段 | 目标阶段 | 传递内容 |
-|--------|----------|---------|
-| Phase 1 → Phase 2 | 指标名称列表、维度列表、建议分层/引擎 |
-| Phase 1 → `docs/wip/` | 结构化需求清单持久化（跨会话载体） |
-| Phase 1 → Phase 4 | 需求清单（指标、维度、业务逻辑描述、数据来源）— 同会话通过上下文传递，跨会话通过 `docs/wip/req-{name}.md` 恢复 |
-| Phase 2 → Phase 3 | 指标复用结果、现有表搜索结果、粒度匹配判断、词根查询结果 |
-| Phase 3 → Phase 4 | 目标表 DDL（含主键、字段列表、COMMENT） |
-| Phase 3 → Phase 4 | 输出类型（CREATE TABLE / ALTER TABLE）→ 决定 ETL 生成模式（incremental / patch） |
-| Phase 3 → Phase 4 | ALTER TABLE DDL 内容（patch 模式时，传入变更的字段定义） |
-| Phase 3 → `docs/wip/` | 更新需求文件中的 `target_table` 为确定表名 |
-| Phase 4 → Phase 4.5 | ETL SQL（可选，--review 时传递） |
-| Phase 4 → `docs/wip/` | 回写已确认的字段映射到需求文件；**任何需求变更（新增/移除源表、调整指标口径、修改维度、补充业务逻辑等）同步更新对应章节** |
-| Phase 4 / 4.5 → Phase 5 | ETL SQL（含源表、加工逻辑）、目标表 DDL |
-| Phase 4 → 指标库 | 新指标注册请求 |
-| Phase 4 → 血缘库 | 表级/字段级血缘关系（自动注册） |
-| Phase 3 → MEMORY.md | 表清单更新（新建/扩列） |
-| Phase 4 → MEMORY.md | 决策日志更新（指标入库） |
-| **任意阶段** → `docs/wip/` | **需求变更即时同步**：任何阶段发生需求变更，必须立即更新 `docs/wip/req-{table_name}.md` 的对应章节 |
-| Phase 5 → `docs/wip/` | 更新需求文件状态为 `status: done` |
-| 用户反馈 → pitfalls.md | 踩坑记录（源表特性、ETL 错误） |
-| plan 文件 → DAG_LOOP | 拓扑排序、任务状态、依赖关系 |
-| 已完成任务 N 的 DDL → 依赖任务 M 的 Phase 2 | 作为源表元数据（虚拟元数据，表可能尚未在 metastore 中创建） |
-| 动态分解 (Phase 4) → plan 文件 | 新任务节点 + 依赖边 + 当前任务阻塞标记 |
+| 源阶段 | 目标阶段 | 传递内容 | Checkpoint 持久化 |
+|--------|----------|---------|-------------------|
+| Phase 1 → Phase 2 | 指标名称列表、维度列表、建议分层/引擎 | `phase1.dimensions`, `phase1.granularity`, `phase1.target_layer`, `phase1.target_engine` |
+| Phase 1 → `docs/wip/` | 结构化需求清单持久化（跨会话载体） | `phase_completed: 1` |
+| Phase 1 → Phase 4 | 需求清单（指标、维度、业务逻辑描述、数据来源）— 同会话通过上下文传递，跨会话通过 req 文件恢复 | `phase1.indicator_count` |
+| Phase 2 → Phase 3 | 指标复用结果、现有表搜索结果、粒度匹配判断、词根查询结果 | `phase2.reuse_decision`, `phase2.word_roots_cached`, `phase2.candidate_tables` |
+| Phase 3 → Phase 4 | 目标表 DDL（含主键、字段列表、COMMENT） | `phase3.ddl_path` |
+| Phase 3 → Phase 4 | 输出类型（CREATE TABLE / ALTER TABLE）→ 决定 ETL 模式 | `phase3.ddl_type` |
+| Phase 3 → Phase 4 | ALTER TABLE DDL 内容（patch 模式时） | — (读 DDL 文件) |
+| Phase 3 → `docs/wip/` | 更新需求文件中的 `target_table` 为确定表名 | `phase_completed: 3` |
+| Phase 4 → Phase 4.5 | ETL SQL（可选，--review 时传递） | `phase4.etl_path` |
+| Phase 4 → `docs/wip/` | 回写字段映射 + 需求变更同步 | `phase4.mapping_confirmed`, `phase4.logic_plan_approved` |
+| Phase 4 / 4.5 → Phase 5 | ETL SQL + 目标表 DDL | `phase4.etl_path` + `phase3.ddl_path` |
+| Phase 4 → 指标库 | 新指标注册请求 | `phase4.indicators_registered` |
+| Phase 4 → 血缘库 | 表级/字段级血缘关系（自动注册） | `phase4.lineage_registered` |
+| Phase 3 → MEMORY.md | 表清单更新（新建/扩列） | — |
+| Phase 4 → MEMORY.md | 决策日志更新（指标入库） | — |
+| **任意阶段** → `docs/wip/` | **需求变更即时同步** | — |
+| Phase 5 → `docs/wip/` | `status: done` + `phase_completed: 5` | `phase5.qa_path`, `phase5.smoke_test_count`, `phase5.dqc_rule_count` |
+| 用户反馈 → pitfalls.md | 踩坑记录（源表特性、ETL 错误） | — |
+| plan 文件 → DAG_LOOP | 拓扑排序、任务状态、依赖关系 | — |
+| 已完成任务 N 的 DDL → 依赖任务 M 的 Phase 2 | 作为源表元数据 | — |
+| 动态分解 (Phase 4) → plan 文件 | 新任务节点 + 依赖边 + 当前任务阻塞标记 | — |
+
+> **Schema 版本**: req 文件 `schema_version: 2` 时使用 checkpoint 列持久化；v1 文件无 checkpoint，仅依赖会话上下文和文件扫描。详见 [req-file-schema.md](req-file-schema.md)。
 
 ---
 

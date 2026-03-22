@@ -121,16 +121,20 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 助手: [从 Phase 4 开始，跳过 Phase 1-3]
 ```
 
-**前置数据校验**: 中途进入时，必须先检查跳过阶段的产出物是否已就绪，缺失则提示用户补充：
+**前置数据校验**: 中途进入时，优先从 req 文件的 `phase_checkpoints` 恢复上下文（Schema v2），v1 文件回退到文件扫描：
 
 | 起始阶段 | 必需的前置数据 | 校验方式 |
 |---------|--------------|---------|
-| `--from=ddl` (Phase 3) | 需求字段列表、建议分层/引擎 | 优先扫描 `docs/wip/` 下 `status: wip` 的需求文件；未找到则询问用户提供需求描述或指标列表 |
-| `--from=etl` (Phase 4) | 目标表 DDL + 需求清单（含指标、维度、业务逻辑描述） | 1. 扫描 `docs/wip/` 下需求文件，列出供用户选择 2. 检查用户是否提供了 DDL 文件路径或内容 3. 缺失项要求补充 |
-| `--from=patch` (Phase 4 patch) | 现有 ETL 脚本路径 + 变更需求描述 | 1. 检查 ETL 文件是否存在 2. 要求用户提供变更需求描述 3. 可选提供 ALTER TABLE DDL（新增字段时需要） |
-| `--from=qa` (Phase 5) | ETL SQL + 目标表 DDL | 检查用户是否提供了 ETL 和 DDL 文件路径，未提供则要求补充 |
+| `--from=ddl` (Phase 3) | 需求字段列表、建议分层/引擎 | **v2**: 扫描 `docs/wip/` 下 `phase_completed >= 2` 的 req 文件，从 `phase1`+`phase2` checkpoint 加载维度、粒度、词根缓存。**v1 回退**: 扫描 `status: wip` 的需求文件；未找到则询问用户 |
+| `--from=etl` (Phase 4) | 目标表 DDL + 需求清单 | **v2**: 扫描 `phase_completed >= 3` 的 req 文件，从 `phase3.ddl_path` 加载 DDL，从 `phase3.ddl_type` 决定 ETL 模式。**v1 回退**: 列出 req 文件供用户选择 + 检查 DDL 文件路径 |
+| `--from=patch` (Phase 4 patch) | 现有 ETL 脚本路径 + 变更需求描述 | **v2**: 从 `phase4.etl_path` 定位现有脚本。**v1 回退**: 检查 ETL 文件是否存在，要求用户提供路径 |
+| `--from=qa` (Phase 5) | ETL SQL + 目标表 DDL | **v2**: 扫描 `phase_completed >= 4` 的 req 文件，从 `phase4.etl_path` + `phase3.ddl_path` 加载。**v1 回退**: 要求用户提供文件路径 |
+| `--resume`（单表） | 已有 req 文件 | **v2**: 扫描 `docs/wip/req-*.md` 中 `status: wip` 且 `schema_version: 2` 的文件，按 `phase_completed` 展示进度。**Phase 4 子步骤分流**: 当 `phase_completed=3` 且 `phase4.phase4_progress` 非空时，优先按 `phase4_progress` 定位子步骤断点（`4a`→从4b继续，`4b`→从4c继续，`4c`→从4d继续），而非从 4a 重跑。其他阶段从下一阶段继续。**v1 回退**: 列出 `status: wip` 的 req 文件，询问用户从哪个阶段继续 |
+| `--resume`（多表） | 已有 plan 文件 | 扫描 `docs/wip/plan-*.md`，从 Task Registry 的 `phase_progress` 断点恢复 DAG 循环执行（不依赖 req 文件的 checkpoint，多表进度由 plan 文件管理） |
 
 未通过校验时，列出缺失项并询问用户提供，**不自动跳过**。
+
+> **Schema 版本判断**: 读取 req 文件时，检查 `schema_version` 字段。值为 `2` 则使用 checkpoint 逻辑；缺失或为 `1` 则走 v1 回退路径。详见 [references/req-file-schema.md](references/req-file-schema.md)。
 
 ### 方式三：交互式确认
 
@@ -165,18 +169,35 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 ## 阶段详解
 
+### Checkpoint 读写前置条件
+
+各阶段的 `🔄 上下文加载`（Step 0）和 GATE 通过后的 `📌 checkpoint 写入`，均受同一前置条件约束：
+
+1. `docs/wip/req-{table_name}.md` 文件存在
+2. 该文件的 `schema_version` 字段值为 `2`
+
+**不满足时的行为**：
+- **Step 0 上下文加载**: 静默跳过，改为从当前会话上下文获取所需信息（DDL 路径、ETL 路径等由用户在 `--from=` 时直接提供，或从前序阶段的会话记忆中获取）
+- **GATE checkpoint 写入**: 静默跳过，不影响工作流继续执行
+
+典型场景：用户通过 `--from=etl` 直接提供 DDL 路径而未经过 Phase 1 创建 req 文件，此时工作流正常执行 Phase 4→5，Step 0 和 checkpoint 写入均跳过。
+
+---
+
 ### Phase 1: 需求拆解 (dw-requirement-triage)
 
 **触发条件**: 用户提供需求文档或业务描述
 
 **☑️ 必做清单（按顺序执行，不可跳过）**:
 1. ⚠️ **必须**调用 `dw-requirement-triage` skill（禁止自行拆解需求）
-2. 将结构化需求清单写入 `docs/wip/req-{table_name}.md`（`status: wip`）
+2. 将结构化需求清单写入 `docs/wip/req-{table_name}.md`，frontmatter 必填字段：`schema_version: 2`, `status: wip`, `phase_completed: 0`, `table_name`, `schema`(物理库名), `layer`(dm/da), `engine`(hive/impala/doris), `created`(当天日期)。完整字段定义见 [references/req-file-schema.md](references/req-file-schema.md)
 3. 多表模式: 执行 Step 8.3 公共层分析，检测跨任务指标/事实表重叠
 4. 单表 da: 执行 Step 8.4 dm 下沉分析，检测通用指标是否应先落 dm 层
 5. 如首次运行，采集用户偏好写入 MEMORY.md
 
 > **⏸️ GATE**: 展示需求清单，等待用户确认拆解结果正确。禁止自动跳转到 Phase 2。
+>
+> **📌 GATE 通过后**: 写入 `phase_checkpoints.phase1`（dimensions, granularity, target_layer, target_engine, indicator_count, complexity_score, multi_table_mode, completed_at），更新 `phase_completed: 1`。Schema 详见 [references/req-file-schema.md](references/req-file-schema.md)。
 
 执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
@@ -187,6 +208,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 **触发条件**: Phase 1 用户确认通过
 
 **☑️ 必做清单（按顺序执行，不可跳过）**:
+0. 🔄 **上下文加载**: Read `docs/wip/req-{table_name}.md`，从 frontmatter 和 `phase_checkpoints.phase1` 提取：维度（dimensions）、粒度（granularity）、目标分层（target_layer）、目标引擎（target_engine）、指标数量（indicator_count）。将这些作为本阶段搜索和判断的约束输入。
 1. 读取 MEMORY.md 表清单（补充 MCP 搜索，识别近期新建但元数据未同步的表）
 2. 读取 pitfalls.md（了解源表已知问题）
 3. 调用 `search_existing_indicators` 检查指标是否已存在
@@ -204,6 +226,8 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 > - 扩列还是新建
 >
 > ❌ 用户未确认前，禁止进入 Phase 3。
+>
+> **📌 GATE 通过后**: 写入 `phase_checkpoints.phase2`（reuse_decision, matched_indicators, granularity_match, candidate_tables, word_roots_cached, completed_at），更新 `phase_completed: 2`。
 
 执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
@@ -214,6 +238,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 **触发条件**: Phase 2 用户确认需要开发
 
 **☑️ 必做清单（按顺序执行，不可跳过）**:
+0. 🔄 **上下文加载**: Read `docs/wip/req-{table_name}.md`，从 `phase_checkpoints` 提取：Phase 1 的维度/粒度、Phase 2 的复用决策（reuse_decision）、候选表（candidate_tables）、词根缓存（word_roots_cached）。词根缓存直接用于字段命名，**不重复调用** `search_word_root`。
 1. 读取 MEMORY.md 决策日志（参考历史决策保持一致性）
 2. ⚠️ **必须**调用 `generate-standard-ddl` skill（禁止自行生成 DDL）
 3. 将表名、粒度、操作类型（新建/扩列）写入 MEMORY.md 表清单 + 决策日志
@@ -222,6 +247,8 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 **输出**: CREATE TABLE 或 ALTER TABLE 语句
 
 > **⏸️ GATE**: 展示 DDL + 字段设计表，等待用户确认 DDL 符合预期。禁止自动跳转到 Phase 4。
+>
+> **📌 GATE 通过后**: 写入 `phase_checkpoints.phase3`（modeling_case, ddl_type, ddl_path, field_count, partition_fields, word_root_validated, completed_at），更新 `phase_completed: 3`。
 
 执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
@@ -231,44 +258,97 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 **触发条件**: Phase 3 用户确认 DDL 通过
 
-**☑️ 必做清单（按顺序执行，不可跳过）**:
-1. 读取 pitfalls.md（注入到 Step 2.5 自检清单）
-2. ⚠️ **必须**调用 `generate-etl-sql` skill（禁止自行编写 ETL SQL）
-   - Phase 3 输出 **CREATE TABLE** → 默认模式（incremental/init）
-   - Phase 3 输出 **ALTER TABLE** → `--mode=patch`
+Phase 4 拆分为 4 个子步骤（4a→4d），每步有独立门禁和 checkpoint 写入。子步骤之间默认**连续确认模式**：用户说"确认"或"继续"时自动推进到下一子步骤，无需手动说"开始 4b"。
 
-**📌 以下动作在 GATE 用户确认通过后执行**:
-3. 将新注册的指标写入 MEMORY.md 决策日志
-4. 回写已确认的字段映射到 `docs/wip/req-{table_name}.md`；任何需求变更同步更新对应章节
-5. 自动调用 `register_lineage` 注册血缘（修改模式使用 `full_refresh=true`，无需用户确认）
+**模式分流**:
+- Phase 3 输出 **CREATE TABLE** → 新建模式（incremental/init）
+- Phase 3 输出 **ALTER TABLE** → `--mode=patch`
 
-**模式详情**:
+---
 
-#### 新建模式（incremental/init）
+#### Phase 4a: 映射确认
 
-1. 加载需求上下文（从会话或 `docs/wip/req-{table_name}.md`）
-2. 解析源表 Schema → 生成字段映射草案 → 用户确认/补全映射
-3. 询问是否需要初始化脚本（默认仅增量）
-4. 分析加工模式 → 复杂模式（3+表关联/窗口/分组集）**必须**先输出伪代码等用户确认
-5. 生成 INSERT OVERWRITE SQL → 指标入库检查 → 血缘注册
+**内部 Step**: generate-etl-sql Step 0（Inversion Gate + 映射草案 + 确认）+ Step 1（源表解析）
+**Patch 模式**: Step P0（加载解析）+ Step P1（影响分析）+ Step P2（方案确认）
 
-#### 修改模式（patch）
+**☑️ 必做清单**:
+0. 🔄 **上下文加载**: Read `docs/wip/req-{table_name}.md`，从 `phase_checkpoints` 提取：Phase 1 的维度/粒度/指标数量、Phase 2 的复用决策、Phase 3 的建模决策（modeling_case）、DDL 路径（ddl_path）、DDL 类型（ddl_type）。同时 Read DDL 文件获取完整字段定义。
+1. 读取 pitfalls.md（注入到后续 Step 2.5 自检清单）
+2. ⚠️ **必须**调用 `generate-etl-sql` skill，执行 Step 0 + Step 1 后暂停（禁止自行编写映射）
 
-1. 定位现有 ETL 脚本（`sql/hive/etl/{table_name}_etl.sql`，未找到则询问用户）
-2. 传入 `generate-etl-sql --mode=patch` → 内部 Step P0~P3 + Step 4~6
-3. 输出修改后的完整 ETL 脚本
+> **⏸️ 4a 门禁**: 展示字段映射结果，等待用户确认映射完整且正确。
+>
+> **📌 门禁通过后**: 写入 `phase4.mapping_confirmed: true`、`inversion_gaps_found`、`source_tables`、`phase4_progress: "4a"`。
+> 用户说"确认/继续" → 自动进入 4b。
+
+---
+
+#### Phase 4b: 逻辑计划
+
+**内部 Step**: generate-etl-sql Step 2（加工模式分析 + 复杂度评估）+ Step 2.5（逻辑流程确认）
+**Patch 模式**: 跳过（`phase4_progress` 直接写 `"4b"`，进入 4c）
+
+**跳过条件**: 简单聚合模式（单表 + 单层 GROUP BY）或 Patch 模式 → 写入以下 checkpoint 后直接进 4c：
+- `phase4_progress: "4b"`
+- `logic_plan_approved: false`
+- `logic_plan_snapshot: ""`（留空，简单聚合无需快照）
+- `split_suggested: false`
+- `etl_mode`、`complexity_score` 按实际值写入
+
+**☑️ 必做清单**:
+1. 继续调用 `generate-etl-sql`，执行 Step 2 + Step 2.5
+2. 复杂模式（3+表关联/窗口/分组集）**必须**先输出逻辑计划/伪代码
+
+> **⏸️ 4b 门禁**: 展示逻辑计划 + 自检结果，等待用户确认逻辑流程正确。
+>
+> **📌 门禁通过后**: 写入 `phase4.etl_mode`、`complexity_score`、`logic_plan_approved: true`、`logic_plan_snapshot`（CTE 步骤/粒度变化/关键 JOIN 键）、`split_suggested`、`phase4_progress: "4b"`。
+> 用户说"确认/继续" → 自动进入 4c。
+
+---
+
+#### Phase 4c: SQL 生成
+
+**内部 Step**: generate-etl-sql Step 3（构建 SQL）+ Step 4（优化与审查）
+**Patch 模式**: Step P3（应用变更）+ Step 4（优化审查）
+
+**☑️ 必做清单**:
+1. 继续调用 `generate-etl-sql`，执行 Step 3 + Step 4
+2. 询问是否需要初始化脚本（默认仅增量）
 
 **输出**:
 - 新建: `{table_name}_etl.sql`（+ 可选 `{table_name}_init.sql`）
 - 修改: 修改后的 `{table_name}_etl.sql`（含 changelog）
 
-> **⏸️ GATE**: 展示 ETL 产出并等待用户逐项确认：
-> - 字段映射是否正确、是否有遗漏
-> - 逻辑流程/伪代码是否正确
-> - ETL SQL 是否正确
-> - 新指标是否入库
+> **⏸️ 4c 门禁**: 展示 ETL SQL，等待用户确认 SQL 正确。
 >
-> ❌ 用户未确认前，禁止进入 Phase 4.5 或 Phase 5。
+> ❌ 用户未确认前，禁止进入 4d。
+>
+> **📌 门禁通过后**: 写入 `phase4.etl_path`、`init_path`、`phase4_progress: "4c"`。回写已确认的字段映射到 `docs/wip/req-{table_name}.md`；任何需求变更同步更新对应章节。
+> 用户说"确认/继续" → 自动进入 4d。
+
+---
+
+#### Phase 4d: 元数据注册
+
+**内部 Step**: generate-etl-sql Step 5（指标入库）+ Step 6（血缘注册）
+
+**☑️ 必做清单**:
+1. 展示待注册指标列表，确认注册范围：
+   ```
+   以下 N 个指标将注册到指标库，血缘将自动采集：
+   [指标列表]
+   注册范围: (A) 全部注册（默认） (B) 部分注册 (C) 跳过注册
+   ```
+2. 按用户选择执行 Step 5（指标入库）+ Step 6（血缘注册，修改模式使用 `full_refresh=true`）
+3. 将新注册的指标写入 MEMORY.md 决策日志
+
+**失败处理**: 注册失败时降级为 `-- [MCP-PENDING]` 注释标记，不阻断流程。
+
+> **📌 4d 完成后**: 写入 `phase4.indicators_registered`、`indicator_register_scope`、`lineage_registered`、`registration_status`（success/partial_failure/skipped）、`completed_at`、`phase4_progress: "done"`，`review_result` 置为 `null`（由 Phase 4.5 填写），更新 `phase_completed: 4`。
+>
+> **⚠️ 异常自愈**: 若检测到 `phase4_progress: "done"` 但 `phase_completed` 仍为 `3`，自动修正 `phase_completed` 为 `4` 并输出警告。
+
+执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
 ---
 
@@ -278,9 +358,10 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 **默认行为**: 跳过（不加 `--review` 时不执行此阶段）
 
 **☑️ 必做清单（仅 --review 时执行）**:
+0. 🔄 **上下文加载**: Read `docs/wip/req-{table_name}.md`，从 `phase_checkpoints` 提取 Phase 3 的 DDL 路径（ddl_path）和 Phase 4 的 ETL 路径（etl_path）。同时 Read 这两个文件，作为 review-sql 的输入。
 1. ⚠️ **必须**调用 `review-sql` skill（禁止自行审查）
 2. FATAL 项阻断 → 修复后复查（最多 3 轮，超出则列出未解决项询问用户）
-3. 审查通过或用户选择跳过 → 进入 Phase 5
+3. 审查通过或用户选择跳过 → 写入 `phase_checkpoints.phase4.review_result`（`{fatal: N, error: N, warn: N}`）→ 进入 Phase 5
 
 执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
@@ -291,6 +372,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 **触发条件**: Phase 4 用户确认 ETL 通过（或 Phase 4.5 审查通过）
 
 **☑️ 必做清单（按顺序执行，不可跳过）**:
+0. 🔄 **上下文加载**: Read `docs/wip/req-{table_name}.md`，从 `phase_checkpoints` 提取：Phase 1 的维度/粒度/指标数量、Phase 3 的 DDL 路径（ddl_path）、Phase 4 的 ETL 路径（etl_path）、初始化脚本路径（init_path）、已注册指标列表（indicators_registered）。同时 Read DDL 文件和 ETL 文件，确保测试用例覆盖所有字段和指标。
 1. ⚠️ **必须**调用 `generate-qa-suite` skill（禁止自行编写测试）
 
 **输出**: 冒烟测试 + DQC 规则 + Doris 性能分析
@@ -302,7 +384,8 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 > ❌ 用户未确认前，禁止标记工作流完成。
 
 **📌 GATE 确认通过后执行**:
-2. 更新 `docs/wip/req-{table_name}.md` 状态为 `status: done`
+2. 写入 `phase_checkpoints.phase5`（qa_path, smoke_test_count, dqc_rule_count, completed_at），更新 `phase_completed: 5`
+3. 更新 `docs/wip/req-{table_name}.md` 状态为 `status: done`
 
 执行细节见 [references/phase-execution-details.md](references/phase-execution-details.md)
 
@@ -403,7 +486,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 | `/dw-workflow --review` | ETL 生成后执行 SQL 审查（Phase 4.5） |
 | `/dw-workflow --dry-run` | 仅分析，不生成文件 |
 | `/dw-workflow --plan` | 强制多表模式，前置规划（即使需求看起来是单表） |
-| `/dw-workflow --resume` | 从已有 plan 文件恢复执行（扫描 `docs/wip/plan-*.md`） |
+| `/dw-workflow --resume` | 恢复执行：单表扫描 `docs/wip/req-*.md` 按 `phase_completed` 续跑；多表扫描 `docs/wip/plan-*.md` |
 
 ---
 
@@ -454,6 +537,7 @@ description: 数仓开发全流程工作流。串联 dw-requirement-triage → s
 
 ## References
 
+- [references/req-file-schema.md](references/req-file-schema.md) - Req 文件 Schema v2 规范（phase_checkpoints 定义、读写时机）
 - [references/phase-execution-details.md](references/phase-execution-details.md) - Phase 1/2/3/4.5/5 执行详解
 - [references/state-machine.md](references/state-machine.md) - 状态机、项目记忆、上下文传递、异常处理
 - [references/multi-table-orchestration.md](references/multi-table-orchestration.md) - 多表编排规范（Task Registry、状态机、DAG 执行、动态分解）
