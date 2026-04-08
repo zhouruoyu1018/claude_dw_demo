@@ -18,7 +18,8 @@
 --   {YYYY-MM-DD} {author} 初始创建
 -- ============================================================
 
-DROP TABLE IF EXISTS {schema}.{table_name};
+-- [可选] 仅首次建表或用户明确要求重建时启用下行
+-- DROP TABLE IF EXISTS {schema}.{table_name};
 
 CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
     -- ===== 维度字段 =====
@@ -28,10 +29,17 @@ CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
     {bool_col}         TINYINT         COMMENT '{注释}，0-否 1-是',
 
     -- ===== 指标字段 =====
-    {metric_col}       {TYPE}          COMMENT '{注释}'
+    {metric_col}       {TYPE}          COMMENT '{注释}',
     -- 时间前缀示例: today_(当日), yestd_(昨日), curr_mth_(当月), his_(历史⚠️未入库)
     -- 聚合前缀示例(CONVERGE): sum_, avg_, max_, min_, tot_, cum_
     -- 分类后缀示例(CATEGORY_WORD): _amt, _cnt, _days, _bal, _fee, _ytd, _mtd
+
+    -- ===== 审计字段（必填） =====
+    created_by         STRING          COMMENT '创建人',
+    created_time       STRING          COMMENT '创建时间',
+    updated_by         STRING          COMMENT '更新人',
+    updated_time       STRING          COMMENT '更新时间'
+    -- ⛔ 分区字段 stat_date 不得出现在上方列定义中，仅在 PARTITIONED BY 中声明
 )
 COMMENT '{业务含义}，{更新频率}[粒度:{col1},{col2},stat_date]'
 PARTITIONED BY (stat_date STRING COMMENT '数据日期，格式YYYY-MM-DD')
@@ -101,12 +109,22 @@ Impala 与 Hive 共享 Metastore，通常在 Hive 中建表后通过 `INVALIDATE
 -- 创建日期: {YYYY-MM-DD}
 -- ============================================================
 
+-- [可选] 仅首次建表或用户明确要求重建时启用下行
+-- DROP TABLE IF EXISTS {schema}.{table_name};
+
 CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
     -- ===== 维度字段 =====
     {dim_col}          {TYPE}          COMMENT '{注释}',
 
     -- ===== 指标字段 =====
-    {metric_col}       {TYPE}          COMMENT '{注释}'
+    {metric_col}       {TYPE}          COMMENT '{注释}',
+
+    -- ===== 审计字段（必填） =====
+    created_by         STRING          COMMENT '创建人',
+    created_time       STRING          COMMENT '创建时间',
+    updated_by         STRING          COMMENT '更新人',
+    updated_time       STRING          COMMENT '更新时间'
+    -- ⛔ 分区字段 stat_date 不得出现在上方列定义中，仅在 PARTITIONED BY 中声明
 )
 COMMENT '{表注释}'
 PARTITIONED BY (stat_date STRING COMMENT '数据日期，格式YYYY-MM-DD')
@@ -150,6 +168,9 @@ REFRESH {schema}.{table_name};
 -- 创建日期: {YYYY-MM-DD}
 -- ============================================================
 
+-- [可选] 仅首次建表或用户明确要求重建时启用下行
+-- DROP TABLE IF EXISTS {db}.{table_name};
+
 CREATE TABLE IF NOT EXISTS {db}.{table_name} (
     -- ===== Key 列（维度） =====
     `partition_key`    DATE            COMMENT '数据日期',
@@ -184,6 +205,9 @@ PROPERTIES (
 适用于需要 Upsert 语义的场景：
 
 ```sql
+-- [可选] 仅首次建表或用户明确要求重建时启用下行
+-- DROP TABLE IF EXISTS {db}.{table_name};
+
 CREATE TABLE IF NOT EXISTS {db}.{table_name} (
     -- ===== Key 列（主键） =====
     `{pk_col}`         {TYPE}          COMMENT '{注释}',
@@ -207,6 +231,9 @@ PROPERTIES (
 适用于明细日志、全量保留：
 
 ```sql
+-- [可选] 仅首次建表或用户明确要求重建时启用下行
+-- DROP TABLE IF EXISTS {db}.{table_name};
+
 CREATE TABLE IF NOT EXISTS {db}.{table_name} (
     `{col}`            {TYPE}          COMMENT '{注释}'
 )
@@ -231,6 +258,9 @@ PROPERTIES (
 -- 同步字段:    仅同步需要的字段，非全量复制
 -- 创建时间:    {YYYY-MM-DD}
 -- =================================================================
+
+-- [可选] 仅首次建表或用户明确要求重建时启用下行
+-- DROP TABLE IF EXISTS {db}.{table_name};
 
 CREATE TABLE IF NOT EXISTS {db}.{table_name} (
     `{col1}`           {DORIS_TYPE}    COMMENT '{注释}',

@@ -137,7 +137,7 @@ description: DDL 变更设计师。凡涉及 CREATE TABLE、ALTER TABLE、分区
 对每张候选表，先判断其角色并分级，不同角色采用不同的决策路径：
 
 1. 调用 `get_table_detail` 或 `list_columns` 获取候选表字段列表
-2. 统计**业务列**（排除分区字段和审计字段如 `etl_time`/`create_time`/`update_time`）
+2. 统计**业务列**（排除分区字段和审计字段：`created_by`/`created_time`/`updated_by`/`updated_time` 以及存量表中的 `etl_time`/`create_time`/`update_time`）
 3. 按以下规则判定表角色（**按优先级从高到低依次匹配，首条命中即停止**）：
 
 | 优先级 | 表角色 | 判定规则 | 扩列优先级 |
@@ -376,15 +376,21 @@ DDL 模板（CREATE TABLE / ALTER TABLE）及 Impala/Doris 语法见 [references
 ### 5.0 DDL 生成前置检查
 
 在拼装 DDL 之前，统一检查：
+- **⛔ 分区字段不得重复定义**：`PARTITIONED BY` 中声明的字段（如 `stat_date`、`stat_month`）禁止同时出现在 `CREATE TABLE (...)` 的列定义中，否则 Hive 会报 `FAILED: SemanticException ... Column repeated in partitioning columns`
 - 分区字段是否规范（STRING 类型、格式正确）
 - `logical_primary_key` 是否完整
 - ALTER 分区表是否带 `CASCADE`
 - 所有字段和表是否有 COMMENT
 - 字段是否重复、缺失、顺序异常
+- **审计字段必填（仅 Hive/Impala）**：Hive/Impala 的 `CREATE TABLE` 必须包含 `created_by STRING`、`created_time STRING`、`updated_by STRING`、`updated_time STRING` 四个审计字段，位于指标字段之后、闭括号之前。Doris 表不需要审计字段
+- **DROP 可选**：默认**不加** `DROP TABLE IF EXISTS`，仅当用户明确要求"重建表"或首次建表时才在 CREATE 前加 DROP。避免在现网误删已有表
 
 ### 5.1 必须遵守的规则
 
 - **命名校验前置**: 默认仅当所有非简单维度字段（指标 + 布尔 + 复合维度）`validate_field_names` 通过，才允许生成 DDL；若 MCP 不可用，按 Step 3 MCP 降级规则输出并加 `-- [NAMING-UNVALIDATED]` 标记
+- **DROP 可选**: 默认不加 `DROP TABLE IF EXISTS`，仅当用户明确要求重建或首次建表时才加。DDL 模板中的 DROP 语句为示例，非强制
+- **审计字段必填（仅 Hive/Impala）**：Hive/Impala 的 `CREATE TABLE` 必须包含 `created_by`、`created_time`、`updated_by`、`updated_time` 四个审计字段，位于指标字段之后。Doris 表不需要
+- **⛔ 分区字段禁止重复**: `PARTITIONED BY` 中的字段（如 `stat_date`）禁止同时出现在列定义区域，Hive 会报 `Column repeated in partitioning columns`
 - **TBLPROPERTIES 必填**: `logical_primary_key`（逻辑主键）、`business_owner`、`data_layer`
 - **ALTER TABLE 分区表必须加 `CASCADE`**: 确保新字段应用到已有分区
 - **分区策略**: 日粒度用 `PARTITIONED BY (stat_date STRING)`，多维用 `(stat_date STRING, {enum_col} STRING)`

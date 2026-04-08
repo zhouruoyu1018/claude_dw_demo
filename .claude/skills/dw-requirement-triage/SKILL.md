@@ -169,6 +169,20 @@ search_by_comment(term="放款金额")
 
 使用结构化模板输出提取的数仓需求。模板和示例详见 [output-template.md](references/output-template.md)。
 
+### 阶段职责边界（Phase 1 输出范围）
+
+Phase 1 只负责**识别业务需求**，不负责字段命名。各阶段职责如下：
+
+| 内容 | Phase 1 (本 Skill) | Phase 3 (generate-standard-ddl) |
+|------|:------------------:|:-------------------------------:|
+| 指标/维度的**中文业务名称** | ✅ 输出 | 读取 |
+| 指标的**业务口径描述** | ✅ 输出（如"分子/分母"） | 读取 |
+| 源表的**已有字段名** | ✅ 输出（search-hive-metadata 补全） | 读取 |
+| 目标表的**英文字段名** | ⛔ 不输出 | ✅ 通过词根流程生成 |
+| **字段映射草案**（目标字段↔来源） | ⛔ 不输出 | Phase 4 (generate-etl-sql) 负责 |
+
+> **为什么禁止**：目标表字段命名必须经过 Phase 3 的词根查询 → assemble → validate 全流程。Phase 1 生成的临时英文名未经词根校验，会误导 Phase 3 跳过正规命名流程。
+
 ## Step 8: 需求文件持久化
 
 需求清单输出后，自动写入 `docs/wip/req-{table_name}.md`，确保跨会话不丢失。详见 [persistence.md](references/persistence.md)。
